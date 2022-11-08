@@ -135,7 +135,8 @@ local function winget_complete(word, index, line_state, builder) -- luacheck: no
             clink.matches_are_files()
         end
     end
-    return matches
+  end
+  return matches
 end
 
 --------------------------------------------------------------------------------
@@ -382,8 +383,9 @@ local settings_export_parser = clink.argmatcher()
 :_addexflags({
     opteq=true,
     common_flags,
-})
-:nofiles()
+    { "--force", "Forces the reset of the sources" },
+  })
+  :nofiles()
 
 local settings_parser = clink.argmatcher()
 :_addexflags({
