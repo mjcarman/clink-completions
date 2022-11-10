@@ -2,9 +2,9 @@
 require("arghelper")
 
 local dir_matches    = clink.argmatcher():addarg(clink.dirmatches)
-local mode_parser    = clink.argmatcher():addarg({"auto", "never", "always"})
-local when_parser    = clink.argmatcher():addarg({"auto", "never", "always"})
-local when_parser_AN = clink.argmatcher():addarg({"always", "never"})
+local mode_parser    = clink.argmatcher():addarg("auto", "never", "always")
+local when_parser    = clink.argmatcher():addarg("auto", "never", "always")
+local when_parser_AN = clink.argmatcher():addarg("always", "never")
 
 local cache_parser = clink.argmatcher()
   :_addexflags({
