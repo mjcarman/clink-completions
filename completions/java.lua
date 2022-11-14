@@ -2,10 +2,11 @@
 require("arghelper")
 
 local file_matches      = clink.argmatcher():addarg({ clink.filematches })
-local dir_matches       = clink.argmatcher():addarg({ clink.dirmatches })
-local classpath_matches = clink.argmatcher():addarg({ clink.dirmatches, clink.filematches })
+local dir_list          = clink.argmatcher():addarg({ loopchars=";", clink.dirmatches })
+local classpath_matches = clink.argmatcher():addarg({ loopchars=";", clink.dirmatches, clink.filematches })
 local package_matches   = clink.argmatcher():addarg({fromhistory=true})
 local module_matches    = clink.argmatcher():addarg({fromhistory=true})
+local module_list       = clink.argmatcher():addarg({ loopchars=",", module_matches })
 local libname_matches   = clink.argmatcher():addarg({fromhistory=true})
 local pathname_matches  = clink.argmatcher():addarg({fromhistory=true})
 local jarpath_matches   = clink.argmatcher():addarg({fromhistory=true})
@@ -19,11 +20,11 @@ clink.argmatcher("java")
     { hide=true, "-cp"                       .. classpath_matches, " <dir|zip|jar>[;...]",    "Directories, JAR archives, and ZIP archives to search for class files."       },
     { hide=true, "-classpath"                .. classpath_matches, " <dir|zip|jar>[;...]",    "Directories, JAR archives, and ZIP archives to search for class files."       },
     {            "--class-path"              .. classpath_matches, " <dir|zip|jar>[;...]",    "Directories, JAR archives, and ZIP archives to search for class files."       },
-    { hide=true, "-p"                        .. dir_matches,       " <dir>[;<dir>]",          "Directories of modules"                                                       },
-    {            "--module-path"             .. dir_matches,       " <dir>[;<dir>]",          "Directories of modules"                                                       },
-    {            "--upgrade-module-path"     .. dir_matches,       " <dir>[;<dir>]",          "Directories of modules that replace upgradeable modules in the runtime image" },
-    {            "--add-modules"             .. module_matches,    " <module>[,<module>]",    "Root modules to resolve in addition to the initial module."                   },
-    {            "--enable-native-access"    .. module_matches,    " <module>[,<module>]",    "Modules that are permitted to perform restricted native operations."          },
+    { hide=true, "-p"                        .. dir_list,          " <dir>[;<dir>]",          "Directories of modules"                                                       },
+    {            "--module-path"             .. dir_list,          " <dir>[;<dir>]",          "Directories of modules"                                                       },
+    {            "--upgrade-module-path"     .. dir_list,          " <dir>[;<dir>]",          "Directories of modules that replace upgradeable modules in the runtime image" },
+    {            "--add-modules"             .. module_list,       " <module>[,<module>]",    "Root modules to resolve in addition to the initial module."                   },
+    {            "--enable-native-access"    .. module_list,       " <module>[,<module>]",    "Modules that are permitted to perform restricted native operations."          },
     {            "--list-modules",                                                            "List observable modules and exit"                                             },
     { hide=true, "-d"                        .. module_matches,    " <module>",               "Describe a module and exit"                                                   },
     {            "--describe-module"         .. module_matches,    " <module>",               "Describe a module and exit"                                                   },
