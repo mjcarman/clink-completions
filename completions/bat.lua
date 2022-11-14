@@ -1,6 +1,7 @@
 -- argument completion for bat 0.21
 require("arghelper")
 
+local file_matches   = clink.argmatcher():addarg(clink.filematches)
 local dir_matches    = clink.argmatcher():addarg(clink.dirmatches)
 local mode_parser    = clink.argmatcher():addarg("auto", "never", "always")
 local when_parser    = clink.argmatcher():addarg("auto", "never", "always")
@@ -37,6 +38,7 @@ local style_parser = clink.argmatcher()
 clink.argmatcher("bat")
   :_addexarg({
     { "cache"..cache_parser, "Modify the syntax-definition and theme cache" },
+    { file_matches },
   })
   :_addexflags({
     { "-A", hide=true }, { "--show-all",                                     "Show non-printable characters like space, tab or newline."                            },
