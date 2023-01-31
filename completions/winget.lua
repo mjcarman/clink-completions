@@ -1,321 +1,586 @@
-require("arghelper")
-
 --------------------------------------------------------------------------------
--- It would have been great to simply use the "winget complete" command.
--- But it doesn't provide completions for lots of things.
+-- It would have been great to simply use the "winget complete" command.  But
+-- it has two problems:
+--      1.  It doesn't provide completions for lots of things (esp. arguments
+--          for most flags).  It never provides filename or directory matches.
+--      2.  It can't support input line coloring, because there's no way to
+--          populate the parse tree in advance, and because there's no way to
+--          reliably infer the parse tree.
+--
+-- However, we'll use it where we can, because it does provide fancy
+-- completions for some things (at least when a partial word is entered, e.g.
+-- for `winget install Power` which finds package names with prefix "Power").
+
+local standalone = not clink or not clink.argmatcher
+local clink_version = require('clink_version')
 
 --------------------------------------------------------------------------------
 -- Helper functions.
 
-local function winget_complete(command)
-  local matches = {}
-  local winget  = os.getenv("USERPROFILE")
-  if winget then
-    winget = '"'..path.join(winget, "AppData\\Local\\Microsoft\\WindowsApps\\winget.exe")..'"'
-    local f = io.popen('2>nul '..winget..' complete --word="" --commandline="winget '..command..' " --position='..tostring(9 + #command)) -- luacheck: no max line length
-    if f then
-      for line in f:lines() do
-        table.insert(matches, line)
-      end
-      f:close()
+-- Clink v1.4.12 and earlier fall into a CPU busy-loop if
+-- match_builder:setvolatile() is used during an autosuggest strategy.
+local volatile_fixed = clink_version.has_volatile_matches_fix
+
+local function sanitize_word(line_state, index, info)
+    if not info then
+        info = line_state:getwordinfo(index)
     end
-  end
-  return matches
+
+    local end_offset = info.offset + info.length - 1
+    if volatile_fixed and end_offset < info.offset and index == line_state:getwordcount() then
+        end_offset = line_state:getcursor() - 1
+    end
+
+    local word = line_state:getline():sub(info.offset, end_offset)
+    word = word:gsub('"', '\\"')
+    return word
 end
 
-local function complete_export_source()
-  return winget_complete("export --source")
+local function append_word(text, word)
+    if #text > 0 then
+        text = text .. " "
+    end
+    return text .. word
+end
+
+local function sanitize_line(line_state)
+    local text = ""
+    for i = 1, line_state:getwordcount() do
+        local info = line_state:getwordinfo(i)
+        local word
+        if info.alias then
+            word = "winget"
+        elseif not info.redir then
+            word = sanitize_word(line_state, i, info)
+        end
+        if word then
+            text = append_word(text, word)
+        end
+    end
+    local endword = sanitize_word(line_state, line_state:getwordcount())
+    return text, endword
+end
+
+local debug_print_query
+if tonumber(os.getenv("DEBUG_CLINK_WINGET") or "0") > 0 then
+    local query_count = 0
+    local color_index = 0
+    local color_values = { "52", "94", "100", "22", "23", "19", "53" }
+    debug_print_query = function (endword)
+        query_count = query_count + 1
+        color_index = color_index + 1
+        if color_index > #color_values then
+            color_index = 1
+        end
+        clink.print("\x1b[s\x1b[H\x1b[1;37;48;5;"..color_values[color_index].."mQUERY #"..query_count..", endword '"..endword.."'\x1b[m\x1b[K\x1b[u", NONL) -- luacheck: no max line length, no global
+    end
+else
+    debug_print_query = function () end
+end
+
+local function winget_complete(word, index, line_state, builder) -- luacheck: no unused args
+    local matches = {}
+    local winget = os.getenv("LOCALAPPDATA")
+
+    -- In the background (async auto-suggest), delay `winget complete` by 200 ms
+    -- to coalesce rapid keypresses into a single query.  Overall, this improves
+    -- the responsiveness for showing auto-suggestions which involve slow
+    -- network queries.  The drawback is that all background `winget complete`
+    -- queries take 200 milliseconds longer to show results.  But it can save
+    -- many seconds, so on average it works out as feeling more responsive.
+    if winget and volatile_fixed and builder.setvolatile and rl.islineequal then
+        local co, ismain = coroutine.running()
+        if not ismain then
+            local orig_line = line_state:getline():sub(1, line_state:getcursor() - 1)
+            clink.setcoroutineinterval(co, .2)
+            coroutine.yield()
+            clink.setcoroutineinterval(co, 0)
+            if not rl.islineequal(orig_line, true) then
+                winget = nil
+                builder:setvolatile()
+            end
+        end
+    end
+
+    if winget then
+        winget = '"'..path.join(winget, "Microsoft\\WindowsApps\\winget.exe")..'"'
+
+        local commandline, endword = sanitize_line(line_state)
+        debug_print_query(endword)
+        local command = '2>nul '..winget..' complete --word="'..endword..'" --commandline="'..commandline..'" --position=99999' -- luacheck: no max line length
+        local f = io.popen(command)
+        if f then
+            for line in f:lines() do
+                line = line:gsub('"', '')
+                if line ~= "" and (standalone or line:sub(1,1) ~= "-") then
+                    table.insert(matches, line)
+                end
+            end
+            f:close()
+        end
+
+        -- Mark the matches volatile even when generation was skipped due to
+        -- running in a coroutine.  Otherwise it'll never run it in the main
+        -- coroutine, either.
+        if volatile_fixed and builder.setvolatile then
+            builder:setvolatile()
+        end
+
+        -- Hack to enable quoting.
+        if clink.matches_are_files and not clink_version.has_quoting_fix then
+            clink.matches_are_files()
+        end
+    end
+    return matches
+end
+
+--------------------------------------------------------------------------------
+-- When this script is run as a standalone Lua script, it can traverse the
+-- available winget commands and flags and output the available completions.
+-- This helps when updating the completions this script supports.
+
+if standalone then
+
+    local function ignore_match(match)
+        if match == "--help" or
+                match == "--no-vt" or
+                match == "--rainbow" or
+                match == "--retro" or
+                match == "--verbose-logs" or
+                false then
+            return true
+        end
+    end
+
+    local function dump_completions(line, recursive)
+        local line_state = clink.parseline(line..' ""')[1].line_state
+        local t = winget_complete("", 0, line_state, {})
+        if #t > 0 then
+            print(line)
+            for _, match in ipairs(t) do
+                if not ignore_match(match) then
+                    print("", match)
+                end
+            end
+            print()
+            if recursive then
+                for _, match in ipairs(t) do
+                    if not ignore_match(match) then
+                        dump_completions(line.." "..match, not match:find("^-") )
+                    end
+                end
+            end
+        end
+    end
+
+    dump_completions("winget", true)
+    return
+
 end
 
 --------------------------------------------------------------------------------
 -- Parsers for linking.
 
-local add_source_matches   = clink.argmatcher():addarg()
-local arch_matches         = clink.argmatcher():addarg({fromhistory=true})
-local command_matches      = clink.argmatcher():addarg({fromhistory=true})
-local count_matches        = clink.argmatcher():addarg({fromhistory=true, 10, 20, 40})
-local file_matches         = clink.argmatcher():addarg(clink.filematches)
-local header_matches       = clink.argmatcher():addarg({fromhistory=true})
-local id_matches           = clink.argmatcher():addarg({fromhistory=true})
-local locale_matches       = clink.argmatcher():addarg({fromhistory=true})
-local location_matches     = clink.argmatcher():addarg(clink.dirmatches)
-local moniker_matches      = clink.argmatcher():addarg({fromhistory=true})
-local name_matches         = clink.argmatcher():addarg({fromhistory=true})
-local override_matches     = clink.argmatcher():addarg({fromhistory=true})
-local productcode_matches  = clink.argmatcher():addarg({fromhistory=true})
-local query_matches        = clink.argmatcher():addarg({fromhistory=true})
-local scope_matches        = clink.argmatcher():addarg({fromhistory=true})
+local arghelper = require("arghelper")
+
+local empty_arg = clink.argmatcher():addarg()
+local contextual_matches = clink.argmatcher():addarg({winget_complete})
+
+local add_source_matches = empty_arg
+local arch_matches = contextual_matches
+local command_matches = contextual_matches
+local count_matches = clink.argmatcher():addarg({fromhistory=true, 10, 20, 40})
+local dependency_source_matches = clink.argmatcher():addarg({fromhistory=true})
+local file_matches = clink.argmatcher():addarg(clink.filematches)
+local header_matches = clink.argmatcher():addarg({fromhistory=true})
+local id_matches = contextual_matches
+local locale_matches = clink.argmatcher():addarg({fromhistory=true})
+local location_matches = clink.argmatcher():addarg(clink.dirmatches)
+local moniker_matches = contextual_matches
+local name_matches = contextual_matches
+local override_matches = clink.argmatcher():addarg({fromhistory=true})
+local productcode_matches = clink.argmatcher():addarg({fromhistory=true})
+local query_matches = clink.argmatcher():addarg({fromhistory=true})
+local scope_matches = contextual_matches
 local setting_name_matches = clink.argmatcher():addarg({fromhistory=true})
-local source_matches       = clink.argmatcher():addarg({complete_export_source})
-local tag_matches          = clink.argmatcher():addarg({fromhistory=true})
-local type_matches         = clink.argmatcher():addarg({"Microsoft.PreIndexed.Package"})
-local url_matches          = clink.argmatcher():addarg()
-local version_matches      = clink.argmatcher():addarg()
+local source_matches = contextual_matches
+local tag_matches = contextual_matches
+local type_matches = clink.argmatcher():addarg({"Microsoft.PreIndexed.Package"})
+local url_matches = empty_arg
+local version_matches = contextual_matches
 
 --------------------------------------------------------------------------------
 -- Factored flag definitions.
 
+local arch_locale_flags = {
+    { hide=true, "-a"..arch_matches },
+    { "--architecture"..arch_matches, " arch", "" },
+    { "--locale"..locale_matches, " locale", "" },
+}
+
 local common_flags = {
-    { hide=true, "--verbose-logs" },
-    { hide=true, "--no-vt"        },
-    { hide=true, "--rainbow"      },
-    { hide=true, "--retro"        },
-    { hide=true, "-?"             }, { "--help" },
+    { "--verbose-logs" },
+    { "--no-vt" },
+    { "--rainbow" },
+    { "--retro" },
+    { "--help" },
+    { hide=true, "-?" },
+    { hide=true, "--wait" },
+    { hide=true, "--disable-interactivity" },
+    { hide=true, "--verbose" },
 }
 
 local query_flags = {
-  { "-q"..query_matches,  hide=true }, { "--query"  ..query_matches,   " <query>",   "The query used to search for a package" },
-                                       { "--id"     ..id_matches,      " <id>",      "Filter results by id"                   },
-                                       { "--name"   ..name_matches,    " <name>",    "Filter results by name"                 },
-                                       { "--moniker"..moniker_matches, " <moniker>", "Filter results by moniker"              },
-                                       { "--tag"    ..tag_matches,     " <tag>",     "Filter results by tag"                  },
-                                       { "--command"..command_matches, " <command>", "Filter results by command"              },
-  { "-n"..count_matches,  hide=true }, { "--count"  ..count_matches,   " <count>",   "Show no more than specified number of results (between 1 and 1000)" },
-  { "-e",                 hide=true }, { "--exact",                                  "Find package using exact match"         },
+    { hide=true, "-q"..query_matches },
+    { "--query"..query_matches, " query", "" },
+    { "--id"..id_matches, " id", "" },
+    { "--name"..name_matches, " name", "" },
+    { "--moniker"..moniker_matches, " moniker", "" },
+    { hide=true, "-e" },
+    { "--exact" },
+}
+
+local query_flags_more = {
+    { "--tag"..tag_matches, " tag", "" },
+    { "--command"..command_matches, " command", "" },
+    { hide=true, "-n"..count_matches, "" },
+    { "--count"..count_matches, " count", "" },
 }
 
 local source_flags = {
-  { "-s"..source_matches, hide=true }, { "--source"..source_matches, " <source>", "Find package using the specified source" },
+    { hide=true, "-s"..source_matches },
+    { "--source"..source_matches, " source", "" },
 }
 
 --------------------------------------------------------------------------------
 -- Command parsers.
 
-local export_parser = clink.argmatcher()
-  :_addexflags({
+local export_parser = clink.argmatcher():_addexflags({
     opteq=true,
-    common_flags,
+    { hide=true, "-o"..file_matches },
+    { "--output"..file_matches, " file", "" },
     source_flags,
-    { "-o"..file_matches, hide=true }, { "--output"..file_matches, " <file>", "File where the result is to be written" },
-                                       { "--include-versions",         hide=true },
-                                       { "--accept-source-agreements", hide=true },
-  })
-  :addarg(clink.filematches)
-  :nofiles()
-
-local features_parser = clink.argmatcher()
-  :_addexflags({common_flags})
-  :nofiles()
-
-local hash_parser = clink.argmatcher()
-  :_addexflags({
-    opteq=true,
-    { "-f"..file_matches, hide=true },  { "--file"..file_matches, " <file>", "File to be hashed" },
-    { "-m",               hide=true },  { "--msix",                          "Input file will be treated as msix; signature hash will be provided if signed" },
+    { hide=true, "--include-versions" },
+    { hide=true, "--accept-source-agreements" },
     common_flags,
-  })
-  :addarg(clink.filematches)
-  :nofiles()
+})
+:addarg(clink.filematches)
+:nofiles()
 
-local import_parser = clink.argmatcher()
-  :_addexflags({
-    opteq=true,
+local features_parser = clink.argmatcher():_addexflags({
     common_flags,
-    { "-i"..file_matches, hide=true }, { "--import-file" ..file_matches, " <file>", "File describing the packages to install" },
-                                       { "--ignore-unavailable",                    "Ignore unavailable packages"             },
-                                       { "--ignore-versions",                       "Ignore package versions in import file"  },
-                                       { "--accept-package-agreements", hide=true },
-                                       { "--accept-source-agreements",  hide=true },
-  })
-  :addarg(clink.filematches)
-  :nofiles()
+})
+:nofiles()
 
-local install_parser = clink.argmatcher()
-  :_addexflags({
+local hash_parser = clink.argmatcher():_addexflags({
     opteq=true,
+    { hide=true, "-f"..file_matches },
+    { "--file"..file_matches, " file", ""},
+    { hide=true, "-m" },
+    { "--msix" },
     common_flags,
-    query_matches,
+})
+:addarg(clink.filematches)
+:nofiles()
+
+local import_parser = clink.argmatcher():_addexflags({
+    opteq=true,
+    { hide=true, "-i"..file_matches },
+    { "--import-file"..file_matches, " file", "" },
+    { "--ignore-unavailable" },
+    { "--ignore-versions" },
+    { "--no-upgrade" },
+    { hide=true, "--accept-package-agreements" },
+    { hide=true, "--accept-source-agreements" },
+    common_flags,
+})
+:addarg(clink.filematches)
+:nofiles()
+
+local install_parser = clink.argmatcher():_addexflags({
+    opteq=true,
+    query_flags,
+    { hide=true, "-m"..file_matches },
+    { "--manifest"..file_matches, " file", "" },
+    { hide=true, "-v"..version_matches },
+    { "--version"..version_matches, " version", "" },
     source_flags,
-    { "-m" ..file_matches,     hide=true }, { "--manifest"     ..file_matches,    " <file>",      "The path to the manifest of the package"                    },
-    { "-v" ..version_matches,  hide=true }, { "--version"      ..version_matches, " <version>",   "Use the specified version; default is the latest version"   },
-                                            { "--scope"        ..scope_matches,   " <scope>",     "Select install scope (user or machine)"                     },
-    { "-a" ..arch_matches,     hide=true }, { "--architecture" ..arch_matches,    " <arch>",      "Select the architecture to install"                         },
-    { "-i",                    hide=true }, { "--interactive",                                    "Request interactive installation; user input may be needed" },
-    { "-h",                    hide=true }, { "--silent",                                         "Request silent installation"                                },
-                                            { "--locale"       ..locale_matches,   " <locale>",   "Locale to use (BCP47 format)"                               },
-    { "-o" ..file_matches,     hide=true }, { "--log"          ..file_matches,     " <file>",     "Log location (if supported)"                                },
-                                            { "--override"     ..override_matches, " <string>",   "Override arguments to be passed on to the installer"        },
-    { "-l" ..location_matches, hide=true }, { "--location"     ..location_matches, " <location>", "Location to install to (if supported)"                      },
-                                            { "--force",                                          "Override the installer hash check"                          },
-                                            { "--accept-package-agreements",                      "Accept all license agreements for packages"                 },
-                                            { "--accept-source-agreements",                       "Accept all source agreements during source operations"      },
-                                            { "--header"       ..header_matches,   " <header>",   "Optional Windows-Package-Manager REST source HTTP header"   },
-    { "-r" ..file_matches,     hide=true }, { "--rename"       ..file_matches,     " <file>",     "The value to rename the executable file (portable)"         },
-  })
-  :addarg(query_matches)
-  :nofiles()
-
-local list_parser = clink.argmatcher()
-  :_addexflags({
-    opteq=true,
+    { "--scope"..scope_matches, " scope", "" },
+    arch_locale_flags,
+    { hide=true, "-i" },
+    { "--interactive" },
+    { hide=true, "-h" },
+    { "--silent" },
+    { hide=true, "-o"..file_matches },
+    { "--log"..file_matches, " file", "" },
+    { "--override"..override_matches, " string", "" },
+    { hide=true, "-l"..location_matches },
+    { "--location"..location_matches, " location", "" },
+    { "--force" },
+    { "--ignore-security-hash" },
+    { "--ignore-local-archive-malware-scan" },
+    { "--dependency-source"..dependency_source_matches },
+    { "--accept-package-agreements" },
+    { "--accept-source-agreements" },
+    { "--no-upgrade" },
+    { "--header"..header_matches, " header", "" },
+    { hide=true, "-r"..file_matches },
+    { "--rename"..file_matches, " file", "" },
     common_flags,
+})
+:addarg({winget_complete})
+:nofiles()
+
+local __search_parser_flags = {
     query_flags,
+    query_flags_more,
     source_flags,
-    { "--accept-source-agreements", hide=true },
-    { "--header"..header_matches,   " <header>", "Optional Windows-Package-Manager REST source HTTP header" },
-  })
-  :addarg(query_matches)
-  :nofiles()
-
-local search_parser = list_parser
-
-local settings_parser = clink.argmatcher()
-  :_addexflags({
-    { "--enable" ..setting_name_matches, " <setting>", "Enables the specific administrator setting"  },
-    { "--disable"..setting_name_matches, " <setting>", "Disables the specific administrator setting" },
-  })
-  :addarg(setting_name_matches)
-  :nofiles()
-
-local show_parser = clink.argmatcher()
-  :_addexflags({
-    opteq=true,
+    { hide=true, "--accept-source-agreements" },
+    { "--header"..header_matches, " header", "" },
     common_flags,
+}
+
+local list_parser = clink.argmatcher():_addexflags({
+    opteq=true,
+    __search_parser_flags,
+    { "--scope"..scope_matches, " scope", "" },
+})
+:addarg({winget_complete})
+:nofiles()
+
+local search_parser = clink.argmatcher():_addexflags({
+    opteq=true,
+    __search_parser_flags,
+})
+:addarg({winget_complete})
+:nofiles()
+
+local settings_parser = clink.argmatcher():_addexflags({
+    { "--enable"..setting_name_matches, " setting", "" },
+    { "--disable"..setting_name_matches, " setting", "" },
+})
+:addarg(setting_name_matches)
+:nofiles()
+
+local show_parser = clink.argmatcher():_addexflags({
+    opteq=true,
     query_flags,
+    { hide=true, "-m"..file_matches },
+    { "--manifest"..file_matches, " file", "" },
     source_flags,
-    { "-m"..file_matches,    hide=true }, { "--manifest"..file_matches,    " <file>",    "The path to the manifest of the package"                  },
-    { "-v"..version_matches, hide=true }, { "--version" ..version_matches, " <version>", "Use the specified version; default is the latest version" },
-                                          { "--versions",                                "Show available versions of the package"                   },
-                                          { "--header"  ..header_matches,  " <header>",  "Optional Windows-Package-Manager REST source HTTP header" },
-                                          { "--accept-source-agreements",                "Accept all source agreements during source operations"    },
-  })
-  :addarg(query_matches)
-  :nofiles()
-
-local source_add_parser = clink.argmatcher()
-  :_addexflags({
+    arch_locale_flags,
+    { hide=true, "-v"..version_matches },
+    { "--version"..version_matches, " version", "" },
+    { "--versions" },
+    { "--header"..header_matches, " header", "" },
+    { "--accept-source-agreements" },
     common_flags,
-    { "-n"..add_source_matches, hide=true }, { "--name"..add_source_matches, " <name>", "Name of the source"           },
-    { "-a"..url_matches,        hide=true }, { "--arg" ..url_matches,        " <url>",  "Argument given to the source" },
-    { "-t"..type_matches,       hide=true }, { "--type"..type_matches,       " <type>", "Type of the source"           },
-  })
-  :addarg(name_matches)
-  :nofiles()
+})
+:addarg({winget_complete})
+:nofiles()
 
-local source_list_parser = clink.argmatcher()
-  :_addexflags({
+local source_add_parser = clink.argmatcher():_addexflags({
+    { hide=true, "-n"..add_source_matches },
+    { "--name"..add_source_matches, " name", "" },
+    { hide=true, "-a"..url_matches },
+    { "--arg"..url_matches, " url", "" },
+    { hide=true, "-t"..type_matches },
+    { "--type"..type_matches, " type", "" },
+    { "--header"..header_matches, " header", "" },
+    { "--accept-source-agreements" },
     common_flags,
-    { "-n"..source_matches, hide=true }, { "--name"..source_matches, " <name>", "Name of the source" },
-  })
-  :addarg(name_matches)
-  :nofiles()
+})
+:addarg(add_source_matches)
+:nofiles()
 
-local source_update_parser = clink.argmatcher()
-  :_addexflags({
+local source_list_parser = clink.argmatcher():_addexflags({
+    { hide=true, "-n"..source_matches },
+    { "--name"..source_matches, " name", "" },
     common_flags,
-    { "-n"..source_matches, hide=true }, { "--name"..source_matches, " <name>", "Name of the source" },
-  })
-  :addarg(name_matches)
-  :nofiles()
+})
+:addarg(source_matches)
+:nofiles()
 
-local source_remove_parser = clink.argmatcher()
-  :_addexflags({
+local source_update_parser = clink.argmatcher():_addexflags({
+    { hide=true, "-n"..source_matches },
+    { "--name"..source_matches, " name", "" },
     common_flags,
-    { "-n" ..source_matches, hide=true }, { "--name"..source_matches, " <name>", "Name of the source" },
-  })
-  :addarg(name_matches)
-  :nofiles()
+})
+:addarg(source_matches)
+:nofiles()
 
-local source_reset_parser = clink.argmatcher()
-  :_addexflags({
+local source_remove_parser = clink.argmatcher():_addexflags({
+    { hide=true, "-n"..source_matches },
+    { "--name"..source_matches, " name", "" },
     common_flags,
-    { "--force", "Forces the reset of the sources" },
-  })
-  :nofiles()
+})
+:addarg(source_matches)
+:nofiles()
 
-local source_export_parser = clink.argmatcher()
-  :_addexflags({common_flags})
-  :addarg(source_matches)
-  :nofiles()
+local source_reset_parser = clink.argmatcher():_addexflags({
+    { hide=true, "-n"..source_matches },
+    { "--name"..source_matches, " name", "" },
+    { "--force" },
+    common_flags,
+})
+:addarg(source_matches)
+:nofiles()
 
-local source_parser = clink.argmatcher()
-  :_addexflags({
+local source_export_parser = clink.argmatcher():_addexflags({
+    { hide=true, "-n"..source_matches },
+    { "--name"..source_matches, " name", "" },
+    common_flags,
+})
+:addarg(source_matches)
+:nofiles()
+
+local source_parser = clink.argmatcher():_addexflags({
     opteq=true,
     common_flags,
-  })
-  :_addexarg({
-    { "add"   ..source_add_parser,    "Add a new source"       },
-    { "list"  ..source_list_parser,   "List current sources"   },
-    { "update"..source_update_parser, "Update current sources" },
-    { "remove"..source_remove_parser, "Remove current sources" },
-    { "reset" ..source_reset_parser,  "Reset sources"          },
-    { "export"..source_export_parser, "Export current sources" },
-  })
-  :nofiles()
+})
+:addarg({
+    "add"..source_add_parser,
+    "list"..source_list_parser,
+    "update"..source_update_parser,
+    "remove"..source_remove_parser,
+    "reset"..source_reset_parser,
+    "export"..source_export_parser,
+    { hide=true, "ls"..source_list_parser },
+    { hide=true, "refresh"..source_update_parser },
+    { hide=true, "rm"..source_remove_parser },
+})
+:nofiles()
 
-local uninstall_parser = clink.argmatcher()
-  :_addexflags({
+local uninstall_parser = clink.argmatcher():_addexflags({
     opteq=true,
-    common_flags,
     query_flags,
-    { "-m"..file_matches,    hide=true }, { "--manifest"    ..file_matches,        " <file>",    "The path to the manifest of the package"                               },
-                                          { "--product-code"..productcode_matches, " <code>",    "Filters using the product code"                                        },
-    { "-v"..version_matches, hide=true }, { "--version"     ..version_matches,     " <version>", "Use the specified version; default is the latest version"              },
-    { "-i",                  hide=true }, { "--interactive",                                     "Request interactive installation; user input may be needed"            },
-    { "-h",                  hide=true }, { "--silent",                                          "Request silent uninstallation"                                         },
-                                          { "--purge",                                           "Deletes all files and directories in the package directory (portable)" },
-                                          { "--preserve",                                        "Retains all files and directories created by the package (portable)"   },
-    { "-o"..file_matches,    hide=true }, { "--log"         ..file_matches,        " <file>",    "Log location (if supported)"                                           },
-                                          { "--accept-source-agreements",                        "Accept all source agreements during source operations"                 },
-                                          { "--header"      ..header_matches,      " <header>",  "Optional Windows-Package-Manager REST source HTTP header"              },
-  })
-  :addarg(query_matches)
-  :nofiles()
-
-local upgrade_parser = clink.argmatcher()
-  :_addexflags({
-    opteq=true,
+    query_flags_more,
+    { hide=true, "-m"..file_matches },
+    { "--manifest"..file_matches, " file", "" },
+    { "--product-code"..productcode_matches, " code", "" },
+    { hide=true, "-v"..version_matches },
+    { "--version"..version_matches, " version", "" },
+    source_flags,
+    { "--scope"..scope_matches, " scope", "" },
+    { hide=true, "-i" },
+    { "--interactive" },
+    { hide=true, "-h" },
+    { "--silent" },
+    { "--force" },
+    { "--purge" },
+    { "--preserve" },
+    { hide=true, "-o"..file_matches },
+    { "--log"..file_matches, " file", "" },
+    { "--accept-source-agreements" },
+    { "--header"..header_matches, " header", "" },
     common_flags,
+})
+:addarg({winget_complete})
+:nofiles()
+
+local upgrade_parser = clink.argmatcher():_addexflags({
+    opteq=true,
     query_flags,
-    { "-m"..file_matches,     hide=true }, { "--manifest" ..file_matches,    " <file>",      "The path to the manifest of the package"                               },
-    { "-v"..version_matches,  hide=true }, { "--version"  ..version_matches, " <version>",   "Use the specified version; default is the latest version"              },
-    { "-i",                   hide=true }, { "--interactive",                                "Request interactive installation; user input may be needed"            },
-    { "-h",                   hide=true }, { "--silent",                                     "Request silent installation"                                           },
-                                           { "--purge" ,                                     "Deletes all files and directories in the package directory (portable)" },
-    { "-o"..file_matches,     hide=true }, { "--log"      ..file_matches,     " <file>",     "Log location (if supported)"                                           },
-                                           { "--override" ..override_matches, " <string>",   "Override arguments to be passed on to the installer"                   },
-    { "-l"..location_matches, hide=true }, { "--location" ..location_matches, " <location>", "Location to install to (if supported)"                                 },
-                                           { "--force",                                      "Override the installer hash check"                                     },
-                                           { "--accept-package-agreements",                  "Accept all license agreements for packages"                            },
-                                           { "--accept-source-agreements",                   "Accept all source agreements during source operations"                 },
-                                           { "--header"   ..header_matches,   " <header>",   "Optional Windows-Package-Manager REST source HTTP header"              },
-                                           { "--all",                                        "Update all installed packages to latest if available"                  },
-                                           { "--include-unknown",                            "Upgrade packages even if their current version cannot be determined"   },
-  })
-  :addarg(query_matches)
-  :nofiles()
-
-local validate_parser = clink.argmatcher()
-  :_addexflags({
-    opteq=true,
+    { hide=true, "-m"..file_matches },
+    { "--manifest"..file_matches, " file", "" },
+    { hide=true, "-v"..version_matches },
+    { "--version"..version_matches, " version", "" },
+    source_flags,
+    { hide=true, "-i" },
+    { "--interactive" },
+    { hide=true, "-h" },
+    { "--silent" },
+    { "--purge" },
+    { hide=true, "-o"..file_matches },
+    { "--log"..file_matches, " file", "" },
+    { "--override"..override_matches, " string", "" },
+    { hide=true, "-l"..location_matches },
+    { "--location"..location_matches, " location", "" },
+    { "--scope"..scope_matches, " scope", "" },
+    arch_locale_flags,
+    { "--ignore-security-hash" },
+    { "--ignore-local-archive-malware-scan" },
+    { "--force" },
+    { "--accept-package-agreements" },
+    { "--accept-source-agreements" },
+    { "--header"..header_matches, " header", "" },
+    { hide=true, "-r" },
+    { hide=true, "--recurse" },
+    { "--all" },
+    { hide=true, "-u" },
+    { hide=true, "--unknown" },
+    { "--include-unknown" },
     common_flags,
-    { "--manifest"..file_matches, " <file>", "The path to the manifest to be validated" },
-  })
-  :addarg(clink.filematches)
-  :nofiles()
+})
+:addarg({winget_complete})
+:nofiles()
 
+local validate_parser = clink.argmatcher():_addexflags({
+    opteq=true,
+    { "--manifest"..file_matches, " file", "" },
+    common_flags
+})
+:addarg(clink.filematches)
+:nofiles()
+
+local complete_parser = clink.argmatcher():_addexflags({
+    nosort=true,
+    { "--word"..empty_arg, " word", "" },
+    { "--commandline"..empty_arg, " text", "" },
+    { "--position"..empty_arg, " num", "" },
+})
+:nofiles()
 
 --------------------------------------------------------------------------------
 -- Define the winget argmatcher.
 
+local winget_command_data_table = {
+    { "install",    install_parser,     "add" },
+    { "show",       show_parser,        "view" },
+    { "source",     source_parser },
+    { "search",     search_parser,      "find" },
+    { "list",       list_parser,        "ls" },
+    { "upgrade",    upgrade_parser,     "update" },
+    { "uninstall",  uninstall_parser,   "rm", "remove" },
+    { "hash",       hash_parser },
+    { "validate",   validate_parser },
+    { "settings",   settings_parser,    "config" },
+    { "features",   features_parser },
+    { "export",     export_parser },
+    { "import",     import_parser },
+    { nil,          complete_parser,    "complete" },
+}
+
+local hidden_aliases = {}
+local winget_commands = {}
+
+for _,command in ipairs(winget_command_data_table) do
+    local i = 3
+    while command[i] do
+        if command[2] then
+            table.insert(winget_commands, command[i]..command[2])
+        else
+            table.insert(winget_commands, command[i])
+        end
+        table.insert(hidden_aliases, command[i])
+        i = i + 1
+    end
+    if command[1] then
+        if command[2] then
+            table.insert(winget_commands, command[1]..command[2])
+        else
+            table.insert(winget_commands, command[1])
+        end
+    end
+end
+
+table.insert(winget_commands, arghelper.make_arg_hider_func(hidden_aliases))
+
 clink.argmatcher("winget")
-  :_addexarg({
-    { "install"  .. install_parser,    "Installs the given package"                  },
-    { "show"     .. show_parser,       "Shows information about a package"           },
-    { "source"   .. source_parser,     "Manage sources of packages"                  },
-    { "search"   .. search_parser,     "Find and show basic info of packages"        },
-    { "list"     .. list_parser,       "Display installed packages"                  },
-    { "upgrade"  .. upgrade_parser,    "Shows and performs available upgrades"       },
-    { "uninstall".. uninstall_parser,  "Uninstalls the given package"                },
-    { "hash"     .. hash_parser,       "Helper to hash installer files"              },
-    { "validate" .. validate_parser,   "Validates a manifest file"                   },
-    { "settings" .. settings_parser,   "Open settings or set administrator settings" },
-    { "features" .. features_parser,   "Shows the status of experimental features"   },
-    { "export"   .. export_parser,     "Exports a list of the installed packages"    },
-    { "import"   .. import_parser,     "Installs all the packages in a file"         },
-  })
-  :_addexflags({
-    { "-v", hide=true }, { "--version", "Display the version of the tool"  },
-                         { "--info",    "Display general info of the tool" },
-                         { "--help"},
-  })
+:_addexarg(winget_commands)
+:_addexflags({
+    common_flags,
+    { hide=true, "-v" },
+    "--version",
+    "--info",
+})

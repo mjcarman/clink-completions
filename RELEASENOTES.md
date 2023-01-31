@@ -1,5 +1,33 @@
 # Release Notes
 
+## 0.4.5 (Jan 28, 2023)
+
+  * `af42a5` Fix error in `openssl` completions (#165).
+  * `af01e4` Improve `winget` completions (#164).
+
+## 0.4.4 (Jan 14, 2023)
+
+  * `c3433f` Fix error in ssh completions (#163).
+
+## 0.4.3 (Jan 14, 2023)
+
+  * `d57a33` Add completions for wireless devices for `adb` and `scrcpy` (#162).
+  * `992fad` Add completions for `openssl` and enhance completions for `ssh`.
+  * `8e222c` Fix chocolatey completion script when chocolatey is not installed.
+  * `5a9b90` Add another flag for `code` completions (VSCode).
+
+## 0.4.2 (Dec 1, 2022)
+
+  * `a83181` Add completions for `code` (VSCode).
+  * `fa1873` Fix `adb` and `scrcpy` initialization (#159).
+  * `3df1c9` [git] Add `--staged` for `git diff`.
+  * `a7a430` [git] Add `--no-index`, `--cached`, `--merge-base` for `git diff`.
+  * `fca377` [common] Fix completions after a sub-parser (e.g. `git show --diff-merges=1 -`<kbd>Tab</kbd>).
+  * `a07bb2` [git] Add `git rev-parse` completions.
+  * `2cac40` Add completions for `colortool`.
+  * `7d666b` [git] Add `git tag` completions.
+  * `8d5738` [git] Add descriptions for some `git` command flags.
+
 ## 0.4.1 (Aug 30, 2022)
 
   * `d1de7d` Fix `fastboot` and `scrcpy` script errors (#158)
