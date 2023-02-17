@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.4.7 (Feb 15, 2023)
+
+  * `504a55` Add completions for `gsudo` (from [gsudo](https://github.com/gerardog/gsudo)).
+  * `19d2f7` Update quoting support in `winget` completions.
+  * `bdb67a` Improve completions when `sudo` from [sudo-windows](https://github.com/chrisant996/sudo-windows) is used.
+
 ## 0.4.6 (Feb 1, 2023)
 
   * `7c22a6` Add descriptions for `winget` flag and arg completions.
