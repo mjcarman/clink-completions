@@ -1,22 +1,24 @@
--- Completions for bat (https://github.com/sharkdp/bat).
+-- Completions for delta (https://github.com/dandavison/delta).
 
 --------------------------------------------------------------------------------
 local function list_languages(_, _, _, builder)
     local m = {}
-    local f = io.popen('2>nul bat.exe --list-languages')
+    local f = io.popen('2>nul delta.exe --list-languages')
     if f then
         if builder.setforcequoting then
             builder:setforcequoting()
             for line in f:lines() do
-                local lang = line:match('^([^:]+):')
+                local lang = line:match('^([^\x1b]+) \x1b')
                 if lang then
+                    lang = lang:gsub(' +$', '')
                     table.insert(m, lang)
                 end
             end
         else
             for line in f:lines() do
-                local lang = line:match('^([^:]+):')
+                local lang = line:match('^([^\x1b]+) \x1b')
                 if lang then
+                    lang = lang:gsub(' +$', '')
                     if lang:find('[+ ()]') then
                         lang = '"' .. lang .. '"'
                     end
@@ -32,15 +34,17 @@ end
 --------------------------------------------------------------------------------
 local function list_themes(_, _, _, builder)
     local m = {}
-    local f = io.popen('2>nul bat.exe --list-themes')
+    local f = io.popen('2>nul delta.exe --list-syntax-themes')
     if f then
         if builder.setforcequoting then
             builder:setforcequoting()
             for line in f:lines() do
+                line = line:gsub('^dark%s+', ''):gsub('^light%s+', '')
                 table.insert(m, line)
             end
         else
             for line in f:lines() do
+                line = line:gsub('^dark%s+', ''):gsub('^light%s+', '')
                 if line:find('[+ ()]') then
                     line = '"' .. line .. '"'
                 end
@@ -56,29 +60,19 @@ end
 local function add_pending(pending, flags, descriptions, hideflags) -- luacheck: no unused
     if pending then
         if pending.arginfo and pending.desc and not pending.values then
-            local values = pending.desc:match('Possible values: ([^.]+)')
-            if values then
-                values = values:gsub('*', '')
-            else
-                values = pending.desc:match('^[^(.]*%([^)]+%)')
-            end
-            if values then
+            if pending.arginfo:find('[a-z]') then
                 pending.values = pending.values or {}
-                for _, v in ipairs(string.explode(values, ', ')) do
+                for _, v in ipairs(string.explode(pending.arginfo, '<|>')) do
                     table.insert(pending.values, v)
                 end
-            elseif pending.long == '--language' then
+            elseif pending.long == '--default-language' then
                 pending.values = { list_languages }
-            elseif pending.long == '--file-name' then
-                pending.values = { clink.filematches }
-            elseif pending.long == '--diff-context' then
-                pending.values = { '1', '2', '3', '5', '10', '20', '50' }
-            elseif pending.long == '--tabs' then
-                pending.values = { '0', '1', '2', '4', '8' }
-            elseif pending.long == '--terminal-width' then
-                pending.values = { history=true, '72', '80', '100', '120' }
-            elseif pending.long == '--theme' then
+            elseif pending.long == '--syntax-theme' then
                 pending.values = { list_themes }
+            elseif pending.arginfo == '<PATH>'  then
+                pending.values = { clink.filematches }
+            elseif pending.arginfo == '<CMD>' then
+                pending.values = { history=true, clink.filematches }
             end
             if not pending.values then
                 pending.values = { history=true }
@@ -136,7 +130,7 @@ local function delayinit(argmatcher)
     end
     inited = true
 
-    local f = io.popen('2>nul bat.exe --help')
+    local f = io.popen('2>nul delta.exe --help')
     if not f then
         return
     end
@@ -148,6 +142,9 @@ local function delayinit(argmatcher)
 
     local section = 'text'
     for line in f:lines() do
+        -- delta has no way to suppress escape codes in --help output?
+        line = console.plaintext(line) -- luacheck: no global
+
         local short, long = line:match('^  (%-.), (%-%-%g+)')
         if not short then
             long = line:match('^      (%-%-%g+)')
@@ -200,4 +197,5 @@ local function delayinit(argmatcher)
 end
 
 --------------------------------------------------------------------------------
-clink.argmatcher('bat'):setdelayinit(delayinit)
+clink.argmatcher('delta'):setdelayinit(delayinit)
+

@@ -13,6 +13,8 @@ local parser = function (...)
     return p
 end
 
+-- luacheck: globals matchicons
+
 if clink_version.supports_color_settings then
     settings.add('color.git.star', 'bright green', 'Color for preferred branch completions')
 end
@@ -24,15 +26,76 @@ local dirs_parser = parser({dir_matches})
 
 local looping_files_parser = clink.argmatcher and clink.argmatcher():addarg(clink.filematches):loop()
 
+local function extract_sgr(c)
+    return c and c:match("^\x1b%[(.*)m$") or c
+end
+
+local color_git = "38;2;240;80;50" -- the git orange
+
+local function addicon(m, icon, c)
+    if matchicons and matchicons.addicontomatch then
+        if not c and m.type and m.type:find("file") then
+            if rl.getmatchcolor then
+                c = extract_sgr(rl.getmatchcolor(m.match, m.type))
+            end
+        end
+        return matchicons.addicontomatch(m, icon, c)
+    else
+        return m
+    end
+end
+
+local function addicons(matches)
+    if matchicons and matchicons.addicontomatch then
+        for _, m in ipairs(matches) do
+            local old_type = m.type
+            m.type = "file"
+            addicon(m)
+            m.type = old_type
+        end
+    end
+    return matches
+end
+
 local map_file
-if rl.getmatchcolor then
+if rl and rl.getmatchcolor then
     map_file = function (file)
-        return { match=file, display='\x1b[m'..rl.getmatchcolor(file, 'file')..file, type='arg' }
+        if type(file) == "table" then
+            return file
+        else
+            return { match=file, display='\x1b[m'..rl.getmatchcolor(file, 'file')..file, type='arg' }
+        end
     end
 else
     map_file = function (file)
-        return { match=file, display='\x1b[m'..file, type='arg' }
+        if type(file) == "table" then
+            return file
+        else
+            return { match=file, display='\x1b[m'..file, type='arg' }
+        end
     end
+end
+
+local function has_dot_dirs(token)
+    for _, t in ipairs(string.explode(token, '/\\')) do
+        if t == '.' or t == '..' then
+            return true
+        end
+    end
+end
+
+local function get_relative_prefix(git_dir)
+    local cwd = clink.lower(path.join(os.getcwd(), ''))
+    git_dir = clink.lower(path.join(path.toparent(git_dir), ''))
+    return cwd:sub(#git_dir + 1)
+end
+
+local function adjust_relative_prefix(dir, rel)
+    local len = string.matchlen(dir, rel)
+    if len < 0 then
+        return ''
+    end
+    return dir:sub(len + 1)
 end
 
 ---
@@ -91,14 +154,15 @@ local function list_git_status_files(token, flags) -- luacheck: no unused args
     local result = w()
     local git_dir = git.get_git_common_dir()
     if git_dir then
-        local f = io.popen("git status --porcelain "..(flags or "").." ** 2>nul")
+        local rel_pfx = get_relative_prefix(git_dir)
+        local f = io.popen(git.make_command("status --porcelain "..(flags or "").." **"))
         if f then
             if string.matchlen then -- luacheck: no global
                 --[[
                 token = path.normalise(token)
                 --]]
                 for line in f:lines() do
-                    line = line:match("^.. (.+)$")
+                    line = line:match("^.[^ ] (.+)$")
                     if line then
                         line = path.normalise(line)
                         --[[
@@ -114,12 +178,12 @@ local function list_git_status_files(token, flags) -- luacheck: no unused args
                             table.insert(result, { match = m, type = (isdir and "dir" or "file") })
                         end
                         --]]
-                        table.insert(result, line)
+                        table.insert(result, adjust_relative_prefix(line, rel_pfx))
                     end
                 end
             else
                 for line in f:lines() do
-                    table.insert(result, line:sub(4))
+                    table.insert(result, adjust_relative_prefix(line:sub(4), rel_pfx))
                 end
             end
             f:close()
@@ -154,10 +218,7 @@ end
 local function get_git_aliases()
     local res = w()
 
-    local git_dir = git.get_git_dir()
-    if git_dir == nil then return res end
-
-    local f = io.popen("git config --get-regexp alias 2>nul")
+    local f = io.popen(git.make_command("config --get-regexp alias"))
     if f == nil then return res end
 
     for line in f:lines() do
@@ -173,7 +234,13 @@ local function get_git_aliases()
 end
 
 -- Function to generate completions for alias
+local cached_aliases
+local index_aliases = {}
 local function alias(token) -- luacheck: no unused args
+    if cached_aliases then
+        return cached_aliases
+    end
+
     local res = w()
 
     local aliases = get_git_aliases()
@@ -187,6 +254,45 @@ local function alias(token) -- luacheck: no unused args
         end
     end
 
+    index_aliases = {}
+    for _, a in ipairs(aliases) do
+        index_aliases[a.name] = true
+    end
+
+    if clink.onbeginedit then
+        cached_aliases = res
+    end
+    return res
+end
+
+-- Function to generate completions for all command names
+local cached_commands
+local function catchall(token) -- luacheck: no unused args
+    if cached_commands then
+        return cached_commands
+    end
+
+    local res = w()
+
+    local f = io.popen(git.make_command("help -a --no-aliases"))
+    if f then
+        for line in f:lines() do
+            local name, desc = line:match("^   ([^ ]+) *(.*)$") -- luacheck: no unused
+            if name then
+                -- Currently the descriptions are discarded; only the main
+                -- commands will list descriptions, so that more columns can
+                -- fit on the screen.
+                table.insert(res, name)
+            end
+        end
+        f:close()
+    end
+
+    res:sort()
+
+    if clink.onbeginedit then
+        cached_commands = res
+    end
     return res
 end
 
@@ -223,7 +329,10 @@ local function local_or_remote_branches(token)
 end
 
 local function add_spec_generator(token)
-    return list_git_status_files(token, "-uall"):map(map_file)
+    if has_dot_dirs(token) then
+        return addicons(file_matches(token))
+    end
+    return addicons(list_git_status_files(token, "-uall"):map(map_file))
 end
 
 local function checkout_spec_generator_049(token)
@@ -311,10 +420,24 @@ local function checkout_spec_generator_usedisplay(token)
         if clink_version.supports_query_rl_var and rl.isvariabletrue('colored-stats') then
             star = color.get_clink_color('color.git.star')..star..color.get_clink_color('color.filtered')
         end
-        return files:map(function(file) return '\x1b[m'..file end)
-            :concat(local_branches:map(function(branch) return { match=branch } end))
-            :concat(predicted_branches:map(function(branch) return { match=branch, display=star..branch } end))
-            :concat(remote_branches:map(function(branch) return { match=branch } end))
+        local matches
+        if clink_version.supports_display_filter_description then
+            matches = files:map(function(file)
+                return addicon({ match=file, display='\x1b[m'..file }, "", color_git)
+            end)
+        else
+            matches = files:map(function(file) return '\x1b[m'..file end)
+        end
+        return matches
+            :concat(local_branches:map(function(branch)
+                return addicon({ match=branch }, "", color_git)
+            end))
+            :concat(predicted_branches:map(function(branch)
+                return addicon({ match=branch, display=star..branch }, "", color_git)
+            end))
+            :concat(remote_branches:map(function(branch)
+                return addicon({ match=branch }, "", color_git)
+            end))
     end
 
     return files
@@ -368,11 +491,19 @@ local function checkout_spec_generator_nosort(token)
     end
 
     local mapped = {
-        files:map(map_file),
-        local_branches:map(function(branch) return { match=branch, display=local_pre..branch, type='arg' } end),
-        predicted_branches:map(function(branch) return { match=branch, display=predicted_pre..branch, type='arg' } end),
-        remote_branches:map(function(branch) return { match=branch, display=remote_pre..branch, type='arg' } end),
-        tag_names:map(function(tag) return { match=tag, display=tag_pre..tag, type='arg' } end),
+        files:map(map_file):map(function (match) return addicon(match, "", color_git) end),
+        local_branches:map(function(branch)
+            return addicon({ match=branch, display=local_pre..branch, type='arg' }, "", color_git)
+        end),
+        predicted_branches:map(function(branch)
+            return addicon({ match=branch, display=predicted_pre..branch, type='arg' }, "", color_git)
+        end),
+        remote_branches:map(function(branch)
+            return addicon({ match=branch, display=remote_pre..branch, type='arg' }, "", color_git)
+        end),
+        tag_names:map(function(tag)
+            return addicon({ match=tag, display=tag_pre..tag, type='arg' }, "", extract_sgr(tag_pre))
+        end),
     }
 
     local result = {}
@@ -386,6 +517,10 @@ local function checkout_spec_generator_nosort(token)
 end
 
 local function checkout_spec_generator(token)
+    if has_dot_dirs(token) then
+        return file_matches(token)
+    end
+
     if clink_version.supports_argmatcher_nosort then
         return checkout_spec_generator_nosort(token)
     elseif clink_version.supports_display_filter_description then
@@ -396,6 +531,10 @@ local function checkout_spec_generator(token)
 end
 
 local function checkout_dashdash(token)
+    if has_dot_dirs(token) then
+        return file_matches(token)
+    end
+
     local status_files = list_git_status_files(token, "-uno")
     if clink_version.supports_display_filter_description then
         return status_files:map(function(file) return { match=file, display='\x1b[m'..file, type='arg' } end)
@@ -478,7 +617,7 @@ local function push_branch_spec(token)
     end
 end
 
-local stashes = function(token)  -- luacheck: no unused args
+local stashes = function(token, _, _, builder)  -- luacheck: no unused args
 
     local git_dir = git.get_git_dir()
     if not git_dir then return w() end
@@ -533,6 +672,10 @@ local stashes = function(token)  -- luacheck: no unused args
         return ret_filter
     end
 
+    if builder and builder.setforcequoting then
+        builder:setforcequoting()
+    end
+
     if clink_version.supports_display_filter_description then
         clink.ondisplaymatches(filter)
     else
@@ -548,47 +691,72 @@ local function tags()
     return tag_names:map(function(tag) return { match=tag, display=tag_pre..tag, type='arg' } end)
 end
 
+local cached_guides
 local function concept_guides()
-    if clink_version.supports_display_filter_description then
-        local r = io.popen("git help -g 2>nul")
-        if r then
-            local matches = {}
-            local sgr = "\x1b[1m"
-            local mark = " \x1b[22;32m*"
-            for line in r:lines() do
-                local guide, desc = line:match("^   ([^ ]+) +(.+)$")
-                if guide then
+    if cached_guides then
+        return cached_guides
+    end
+
+    local matches = {}
+    local r = io.popen(git.make_command("help -g"))
+    if r then
+        local sgr = "\x1b[m"
+        local mark = " \x1b[22;32m*"
+        for line in r:lines() do
+            local guide, desc = line:match("^   ([^ ]+) *(.*)$")
+            if guide then
+                if clink_version.supports_display_filter_description then
                     table.insert(matches, { match=guide, display=sgr..guide..mark, description="Guide: "..desc } )
+                else
+                    table.insert(matches, guide)
                 end
             end
-            r:close()
-            return matches
         end
+        r:close()
     end
-    return {}
+
+    if clink.onbeginedit then
+        cached_guides = matches
+    end
+    return matches
 end
 
+local cached_all_commands
+local index_main_commands = {}
 local function all_commands()
-    if clink_version.supports_display_filter_description then
-        local r = io.popen("git help -a 2>nul")
-        if r then
-            local matches = {}
-            local prefix = "Command: "
-            local sgr = ""
-            for line in r:lines() do
-                local command, desc = line:match("^   ([^ ]+) +(.+)$")
-                if command then
-                    table.insert(matches, { match=command, display=sgr..command, description=prefix..desc } )
-                elseif line == "Command aliases" then
-                    prefix = "Alias: "
-                    sgr = "\x1b["..settings.get("color.doskey").."m"
-                end
-            end
-            r:close()
-            return matches
-        end
+    if cached_all_commands then
+        return cached_all_commands
     end
-    return {}
+
+    local matches = {}
+    local r = io.popen(git.make_command("help -a"))
+    if r then
+        local prefix = "Command: "
+        local mode = {}
+        for line in r:lines() do
+            local command, desc = line:match("^   ([^ ]+) *(.*)$")
+            if command then
+                if clink_version.supports_display_filter_description then
+                    local mtype = (mode.aliases and "alias") or (index_main_commands[command] and "cmd")
+                    table.insert(matches, { match=command, description=prefix..desc, type=mtype } )
+                else
+                    table.insert(matches, command)
+                end
+            elseif line == "Command aliases" then
+                prefix = "Alias: "
+                mode = { aliases=true }
+            elseif line == "External commands" then
+                prefix = "External command"
+                mode = { external=true }
+            end
+        end
+        r:close()
+    end
+
+    if clink.onbeginedit then
+        cached_all_commands = matches
+    end
+    return matches
 end
 
 -- luacheck: push
@@ -625,6 +793,7 @@ local merge_recursive_options = parser():_addexarg({
     "no-renames",
 })
 local merge_strategies = parser({"resolve", "recursive", "ours", "octopus", "subtree"})
+local number_commits_arg = parser({"10", "25", "50"})
 local origin_arg = parser({fromhistory=true})
 local person_arg = parser({fromhistory=true})
 local pretty_formats_parser = parser({"oneline", "short", "medium", "full", "fuller", "reference", "email", "mboxrd", "raw", "format:"})
@@ -638,19 +807,19 @@ local summary_limit_arg = parser({fromhistory=true})
 local untracked_files_arg = parser({"no", "normal", "all"})
 local x_cmd_arg = parser({fromhistory=true})
 
-local flag__abbrevequals = "--abbrev="..abbrev_lengths
 local flag__colorequals = "--color="..parser({"always", "auto", "never"})
 local flag__columnequals = "--column="..parser({"always", "auto", "never", "column", "row", "plain", "dense", "nodense"})
 local flag__conflictequals = '--conflict='..parser({'merge', 'diff3', 'zdiff3'})
 local flag__dateequals = "--date="..parser({"relative", "local", "iso", "iso-strict", "rfc", "short", "raw", "human", "unix", "default", "format:", "format-local:"})
-local flag__encoding = "--encoding="..parser({fromhistory=true}) --parser("UTF-8", "none")
 local flag__ignore_submodules = "--ignore-submodules="..parser({"none", "untracked", "dirty", "all"})
 local flag__whitespaceequals = "--whitespace="..parser({"nowarn", "warn", "fix", "error", "error-all"})
 
+local flagex__abbrevequals = { '--abbrev='..abbrev_lengths, 'n', '' }
 local flagex__cleanupequals = { opteq=true, "--cleanup="..parser({"strip", "whitespace", "verbatim", "scissors", "default"}), 'option', '' }
 local flagex_c_config = { '-c'..config_arg, ' key=value', 'Set config variable' }
 local flagex__config = { '--config'..config_arg, ' key=value', '' }
 local flagex__depthdepth = { opteq=true, '--depth'..depth_arg, ' depth', '' }
+local flagex__encoding = { opteq=true, '--encoding='..parser({fromhistory=true, "ASCII", "UTF-8", "UTF-16", "UTF-16BE", "UTF-16LE", "UTF-32", "UTF-32BE", "UTF-32LE"}), 'encoding', '' }
 local flagex__gpgsignequals = { '--gpg-sign='..gpg_keyid_arg, 'keyid', '' }
 local flagex_s_mergestrategy = { '-s' .. merge_strategies, ' strategy', 'Use the given merge strategy' }
 local flagex__strategy = { opteq=true, '--strategy' .. merge_strategies, ' strategy', '' }
@@ -704,9 +873,9 @@ local log_flags = {
     { opteq=true, "--after="..placeholder_required_arg, "date", "" },
     { opteq=true, "--until="..placeholder_required_arg, "date", "" },
     { opteq=true, "--before="..placeholder_required_arg, "date", "" },
-    { opteq=true, "--author="..person_arg },
-    { opteq=true, "--committer="..person_arg },
-    { opteq=true, "--grep="..placeholder_required_arg },
+    { opteq=true, "--author="..person_arg, "pattern", "" },
+    { opteq=true, "--committer="..person_arg, "pattern", "" },
+    { opteq=true, "--grep="..placeholder_required_arg, "pattern", "" },
     "--all-match",
     "--invert-grep",
     { "-i", "Case insensitive regex matching" },
@@ -724,9 +893,6 @@ local log_flags = {
     "--first-parent",
     "--not",
     "--all",
-    "--branches", { "--branches="..placeholder_required_arg, "glob", "" },
-    "--tags", { "--tags="..placeholder_required_arg, "glob", "" },
-    "--remotes", { "--remotes="..placeholder_required_arg, "glob", "" },
     { opteq=true, "--glob="..placeholder_required_arg, "glob", "" },
     { opteq=true, "--exclude="..placeholder_required_arg, "glob", "" },
     "--single-worktree",
@@ -736,7 +902,8 @@ local log_flags = {
 
 local log_history_flags = {
     "--follow",
-    { "-L"..parser({fromhistory=true}), ":funcname:file|start,end:file", "Trace evolution of range or function" },
+    { "-L"..parser({fromhistory=true}), " start,end:file", "Trace evolution of range" },
+    { "-L:"..parser({fromhistory=true}), "funcname:file", "Trace evolution of function" },
     { opteq=true, "--grep-reflog="..placeholder_required_arg, "pattern", "" },
     "--remove-empty",
     --"--reflog",
@@ -771,7 +938,7 @@ local commit_formatting_flags = {
     "--oneline",
     "--abbrev-commit",
     "--no-abbrev-commit",
-    flag__encoding,
+    flagex__encoding,
     { "--expand-tabs="..placeholder_required_arg, "n", "" },
     "--expand-tabs",
     "--no-expand-tabs",
@@ -849,7 +1016,7 @@ local diff_flags = {
     "--full-index",
     "--binary",
     "--abbrev",
-    flag__abbrevequals,
+    flagex__abbrevequals,
     { "-B", "[n][/m]", "Break rewrites into delete+create" },
     "--break-rewrites",
     { "--break-rewrites="..placeholder_required_arg, "[n]/[/m]", "" },
@@ -1013,6 +1180,7 @@ local track_flags = {
 local untracked_flags = {
     { "-u", "Show untracked files recursively" },
     { "-uno", "Show no untracked files" },
+    { "-unormal", "Show untracked files and directories" },
     { "-uall", "Show untracked files recursively" },
     "--untracked-files",
     "--untracked-files="..untracked_files_arg,
@@ -1023,7 +1191,7 @@ local untracked_flags = {
 
 local add_parser = parser()
 :setendofflags()
-:addarg(add_spec_generator)
+:addarg(add_spec_generator):loop()
 :_addexflags({
     help_flags,
     { "-n", "Don't actually add files" },
@@ -1129,9 +1297,10 @@ local blame_parser = parser()
     { opteq=true, "--contents="..files_parser, "file", "" },
     { "-C", "[n]", "Detect copies; <n> is threshold %" },
     { "-M", "[n]", "Detect renames; <n> is threshold %" },
-    { "-L"..placeholder_required_arg, " :funcname|start,end", "Annotate only range or function" },
+    { "-L"..parser({fromhistory=true}), " start,end", "Annotate only range" },
+    { "-L:"..parser({fromhistory=true}), "funcname", "Annotate only function" },
     "--abbrev",
-    flag__abbrevequals,
+    flagex__abbrevequals,
     { "-l", "Show long rev" },
     { "-t", "Show raw timestamp" },
     { opteq=true, "--reverse="..placeholder_required_arg, "rev..rev", "" },
@@ -1157,7 +1326,7 @@ local branch_parser = parser()
     "--remotes",
     { opteq=true, "--contains"..placeholder_required_arg, " commit", "" },
     { opteq=true, "--no-contains"..placeholder_required_arg, " commit", "" },
-    "--abbrev", flag__abbrevequals, "--no-abbrev",
+    "--abbrev", flagex__abbrevequals, "--no-abbrev",
     { "-a", "List local and remote tracking branches" },
     "--all",
     { "-d" .. parser({branches}):loop(1), " branch", "Delete a branch" },
@@ -1354,7 +1523,7 @@ local commit_parser = parser()
     "--null",
     { "-F"..files_parser, " file", "Take commit message from the given file" },
     { opteq=true, "--file="..files_parser, "file", "" },
-    { opteq=true, "--author="..person_arg },
+    { opteq=true, "--author="..person_arg, "author", "" },
     { opteq=true, "--date="..placeholder_required_arg, "date", "" },
     { "-m"..placeholder_required_arg, " msg", "Use the given msg as the commit message" },
     { opteq=true, "--message="..placeholder_required_arg, "msg", "" },
@@ -1508,6 +1677,12 @@ local help_parser = parser()
     { "--man",                          "Display manual page for the command in the man format" },
     { "-w",                             "Display manual page for the command in HTML format" },
     { "--web",                          "Display manual page for the command in HTML format" },
+    { "--aliases",                      "Show aliases in --all (the default)" },
+    { "--no-aliases",                   "Don't show aliases in --all" },
+    { "--external-commands",            "Show external commands in --all (the default)" },
+    { "--no-external-commands",         "Don't show external commands in --all" },
+    { "--user-interfaces",              "Print a list of user-facing repository, command and file interfaces" },
+    { "--developer-interfaces",         "Print a list of file formats, protocols and other developer interfaces" },
 })
 if help_parser.setdelayinit then
     help_parser:addarg({delayinit=function (argmatcher) -- luacheck: no unused args
@@ -2116,6 +2291,189 @@ local worktree_parser = parser()
 })
 
 --------------------------------------------------------------------------------
+-- The gitk command parser.
+--
+-- Note: gitk only supports "--flag=param" syntax; not "--flag param".
+
+local disk_usage_parser = parser():addarg("human")
+
+local gitk_parser = parser()
+:setendofflags()
+:_addexflags({
+    -- From gitk source code:
+    { hide=true, "-d" },        -- ??
+    "--date-order",
+    { hide=true, "-p" },
+    { hide=true, "--patch" },
+    { hide=true, "-u" },        -- ??
+    { hide=true, "-a" },        -- ??
+    { hide=true, "-b" },        -- ??
+    { hide=true, "-w" },        -- ??
+    { hide=true, "-c" },        -- ??
+    { hide=true, "-r" },        -- ??
+    { hide=true, "-R" },        -- ??
+    { hide=true, "-B" },        -- ??
+    { hide=true, "-M" },        -- ??
+    { hide=true, "-C" },        -- ??
+    "--no-renames",
+    "--full-index",
+    "--binary",
+    "--abbrev", flagex__abbrevequals, "--no-abbrev",
+    "--find-copies-harder",
+    --{ "-l", "n", "Limit expensive rename/copy checks" }, -- argmatcher parser can't handle no space between flag and its parameters.
+    "--ext-diff",
+    "--no-ext-diff",
+    { "--src-prefix="..parser({fromhistory=true}), "prefix", "" },
+    { "--dst-prefix="..parser({fromhistory=true}), "prefix", "" },
+    "--no-prefix",
+    -- -O*          ??
+    "--text",
+    "--full-diff",
+    "--ignore-space-at-eol",
+    "--ignore-space-change",
+    -- -U*          ??
+    -- --unified=*  ??
+    { hide=true, "--raw" },     -- Seems to have no effect.
+    { hide=true, "--patch-with-raw" },  -- Seems to have no effect.
+    { hide=true, "--patch-with-stat" }, -- Seems to have no effect.
+    "--name-only",
+    "--name-status",
+    "--color",
+    "--log-size",
+    { "--pretty="..pretty_formats_parser, "format", "" },
+    "--decorate",
+    "--abbrev-commit",
+    "--cc",
+    -- -z           ??
+    "--header",
+    "--parents",
+    "--boundary",
+    "--no-color",
+    { "-g",                     "Walk reflogs, not commit ancestry" },
+    "--walk-reflogs",
+    "--no-walk",
+    "--timestamp",
+    "--relative-date",
+    { "--date="..placeholder_required_arg, "date", "" },
+    "--stdin",
+    "--objects",
+    "--objects-edge",
+    "--reverse",
+    -- --color-words=*
+    -- --word-diff=color
+    -- --word-diff*
+    { "--stat="..placeholder_required_arg, "width[,name-width[,count]]", "" },
+    --"--numstat",              -- gitk reports an error with this.
+    "--shortstat",
+    "--summary",
+    --"--check",                -- gitk reports parse errors.
+    "--exit-code",
+    "--quiet",
+    "--topo-order",
+    "--full-history",
+    "--left-right",
+    flagex__encoding,
+    { "--diff-filter="..diff_filter_arg, "[ACDMRTUXB...*]", "" },
+    "--no-merges",
+    "--unpacked",
+    { "--max-count="..placeholder_required_arg, "n", "" },
+    { "--skip="..placeholder_required_arg, "n", "" },
+    { "--since="..placeholder_required_arg, "date", "" },
+    { "--after="..placeholder_required_arg, "date", "" },
+    { "--until="..placeholder_required_arg, "date", "" },
+    { "--before="..placeholder_required_arg, "date", "" },
+    -- --max-age=<epoch>
+    -- --min-age=<epoch>
+    { "--author="..person_arg, "pattern", "" },
+    { "--committer="..person_arg, "pattern", "" },
+    { "--grep="..placeholder_required_arg, "pattern", "" },
+    { "-i", "Case insensitive regex matching" },
+    { "-E", "Use extended regex patterns" },
+    "--remove-empty",
+    "--first-parent",
+    "--cherry-pick",
+    --{ "-S", "string", "" },
+    --{ "-G", "regex", "" },
+    "--pickaxe-all",
+    "--pickaxe-regex",
+    "--simplify-by-decoration",
+    { "-L"..parser({fromhistory=true}), "start,end:file", "Trace evolution of range" },
+    { "-L:"..parser({fromhistory=true}), "funcname:file", "Trace evolution of function" },
+    { "-n"..number_commits_arg, " number", "Limit number of commits to output" },
+    "--not",
+    "--all",
+    "--merge",
+    "--no-replace-objects",
+
+    -- Specific to gitk:
+    { "--argscmd="..parser({fromhistory=true}), "command", "" },
+    { "--select-commit="..placeholder_required_arg, "ref", "" },
+
+    -- From gitk documentation:
+    "--branches", { "--branches="..placeholder_required_arg, "glob", "" },
+    "--tags", { "--tags="..placeholder_required_arg, "glob", "" },
+    "--remotes", { "--remotes="..placeholder_required_arg, "glob", "" },
+    "--simplify-merges",
+    "--ancestry-path",
+
+    -- From git rev-list help:
+    "--sparse",
+    { "--min-parents="..placeholder_required_arg, "n", "" }, "--no-min-parents",
+    { "--max-parents="..placeholder_required_arg, "n", "" }, "--no-max-parents",
+    -- --exclude-hidden=[receive|uploadpack]
+    "--children",
+    { hide=true, "--disk-usage" },
+    { hide=true, "--disk-usage="..disk_usage_parser, "format", "" },
+    "--pretty",
+    "--object-names",
+    "--no-object-names",
+    "--count",
+    "--bisect",
+    "--bisect-vars",
+    "--bisect-all",
+    "--regexp-ignore-case",
+    "--basic-regexp",
+    "--extended-regexp",
+    "--dirstat",
+    -- TODO: add others from git rev-list documentation.
+})
+-- Optional revision range.
+-- Followed by zero or more path patterns.
+
+if clink.classifier then
+    local gitk_classifier = clink.classifier()
+
+    function gitk_classifier:classify(commands) -- luacheck: no unused
+        local flag_color, input_color
+        for i = 1, #commands do
+            local line_state = commands[i].line_state
+            local classifications = commands[i].classifications
+            if line_state.getcommandwordindex then
+                local cwi = line_state:getcommandwordindex()
+                if path.getbasename(line_state:getword(cwi)) == "gitk" then
+                    local word = line_state:getendword()
+                    if word:find("^%-L[^%:]") then
+                        local info = line_state:getwordinfo(line_state:getwordcount())
+                        if not flag_color then
+                            flag_color = settings.get("color.flag")
+                        end
+                        if not input_color then
+                            input_color = settings.get("color.input")
+                        end
+                        if flag_color then
+                            classifications:applycolor(info.offset, 2, flag_color)
+                        end
+                        if input_color then
+                            classifications:applycolor(info.offset + 2, #word - 2, input_color)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
 -- The main git command parser.
 
 -- This is the set of git commands with custom parsers.  It exists as a separate
@@ -2196,6 +2554,10 @@ local main_commands = {
     { "tag",                "Create, list, delete, or verify a tag reference" },
     { "worktree",           "Manage multiple working trees" },
 }
+
+for _, c in ipairs(main_commands) do
+    index_main_commands[c[1]] = true
+end
 
 -- Commands without descriptions.
 -- This is a table of just command name strings.
@@ -2361,6 +2723,22 @@ local git_flags = {
 
 -- luacheck: pop
 
+local function command_display_filter()
+    if clink.ondisplaymatches then
+        clink.ondisplaymatches(function(matches)
+            for _, m in ipairs(matches) do
+                if index_aliases[m.match] then
+                    m.type = "alias"
+                elseif index_main_commands[m.match] then
+                    m.type = "cmd"
+                end
+            end
+            return matches
+        end)
+    end
+    return {}
+end
+
 -- Initialize the argmatcher.  This may be called repeatedly.
 local function init(argmatcher, full_init)
     -- When doing a full init, must reset in order to maintain the sort order.
@@ -2371,7 +2749,7 @@ local function init(argmatcher, full_init)
     end
 
     -- Build a table that will be used to (re)initialize the git parser.
-    local commands = { nosort=true }
+    local commands = { nosort=true, command_display_filter }
 
     -- First the main commands, with descriptions.
     for _,x in ipairs(main_commands) do
@@ -2411,6 +2789,7 @@ local function init(argmatcher, full_init)
             table.insert(commands, x)
         end
     end
+    table.insert(commands, catchall)
 
     -- Initialize the argmatcher.
     argmatcher:_addexarg(commands)
@@ -2439,3 +2818,13 @@ if git_parser.setdelayinit then
 end
 
 clink.arg.register_parser("git", git_parser)
+clink.arg.register_parser("gitk", gitk_parser)
+
+if clink.onbeginedit then
+    clink.onbeginedit(function()
+        cached_aliases = nil
+        cached_commands = nil
+        cached_guides = nil
+        cached_all_commands = nil
+    end)
+end

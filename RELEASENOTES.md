@@ -1,5 +1,67 @@
 # Release Notes
 
+## 0.5.1 (Mar 8, 2024)
+
+  * Add completions for [`dirx`](https://github.com/chrisant996/dirx).
+  * Add completions for [`eza`](https://github.com/eza-community/eza).
+  * Add completions for [`fd`](https://github.com/sharkdp/fd).
+  * Add completions for [`rg`](https://github.com/BurntSushi/ripgrep) (ripgrep).
+  * Update many of the completion scripts to support icons when [Icons in File Completions](https://github.com/chrisant996/clink-gizmos#setting-up-icons-in-file-completions) from [clink-gizmos](https://github.com/chrisant966/clink-gizmos) is loaded and enabled.
+  * Update `git status` to include `-unormal`.
+  * Update `net` completions to support `net use /d`.
+  * Update `wt` and `start` completions so that completions also work while inputing the commands for `wt` or `start` to launch.
+
+## 0.5.0 (Nov 28, 2023)
+
+  * `b192f9` Improve syntax handling for `doskey` completions.
+  * `35296a` Fix quoting scheme names when using `colortool`.
+  * `d4ef79` Add completions for Windows Terminal (`wt`).
+  * `d10a4a` Add completions for the Windows `sort` command (including its undocumented `/uniq` flag).
+  * `09aaaf` Add completions for CMD's built-in `dir` command.
+  * `4e897a` Add completions for `robocopy`'s `/copy:` and `/dcopy:` flags.
+  * `f5fe5b` Completions work within the `doskey` macro definition when using recent versions of Clink (e.g. `doskey macroname=completions_work_here`).
+  * `932ce8` Add completions for CMD's built-in `for` and `start` commands.
+  * `6ebf67` Add completions for `winget`'s logging flags.
+  * `57722e` Add completions for [`bat`](https://github.com/sharkdp/bat), [`cmdkey`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmdkey), and [`delta`](https://github.com/dandavison/delta).
+
+## 0.4.11 (Oct 1, 2023)
+
+  * `4e40a6` [ssh] Add option completions (#179).
+  * `4e89a8` [git] Improve completions for git:
+    * Use colors to categorize git command names (common, aliases, other).
+    * Add more flag completions for the `git help` command.
+	* Fix `git add` completions to work for the 2nd, 3rd, etc arguments.
+    * Fix to include git external commands when generating command completions.
+    * Fix to include aliases even when current directory is outside a repo.
+    * Fix to generate completions for `git help` even when using older versions of Clink.
+  * `836a66` [git] Fix completing stash names (need quotes).
+  * `367bb4` [git] Fix compatibility with older versions of Clink.
+
+## 0.4.10 (Jun 10, 2023)
+
+  * `22ebe4` [git] Fix to remove leftover test code (#176).
+
+## 0.4.9 (Jun 10, 2023)
+
+  * `9c16b1` [git] Add `--no-optional-locks` when invoking git.
+  * `9c16b1` [git] Add completions for `gitk`.
+  * `beffd8` [git] Fix `git add` completions to not list staged files (#173).
+  * `59fe66` Add completions for `ping`.
+  * `7a6e05` Update `ssh` and `ping` completions (#175).
+  * `06ae0b` Add completions for `signtool`.
+  * `50b2bc` [git] Fix script error when directory name in a git repo contains a `%` character.
+  * `bb6758` [git] Add a global DISABLE_GIT_REMOTE_IN_PROMPT variable that can disable adding " -> {remote}" after a branch name.
+  * `bcfcfa` [git] Small performance improvement in repos with very large git config files.
+
+## 0.4.8 (May 15, 2023)
+
+  * `3e3d9e` Add completions for `nmake` and GNU `make` (#172).
+  * `792451` (internal) Add "directory" keyword in GNU help parser.
+  * `dd6767` [git] Fix `git add` completions to be relative to cwd (#171).
+  * `44937d` [scoop] Add commands "cat", "download", and "import" (#167).
+  * `0a0792` [common] Clarify installation steps in the README.
+  * `46de38` [git] Add missing description for `git add -A`.
+
 ## 0.4.7 (Feb 15, 2023)
 
   * `504a55` Add completions for `gsudo` (from [gsudo](https://github.com/gerardog/gsudo)).

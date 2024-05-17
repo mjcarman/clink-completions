@@ -10,7 +10,7 @@
 --      help_parser.make('curl "--help all" curl')
 --      help_parser.make('xcopy /?')
 --
--- function run(argmatcher, parser, command, config)
+--  function run(argmatcher, parser, command, config)
 --
 --      Runs parser on the command output to initialize argmatcher.
 --
@@ -30,7 +30,7 @@
 --                                      -- (add /x for -x, etc).
 --                  }
 --
--- function make(command, help_flag, parser, config, closure)
+--  function make(command, help_flag, parser, config, closure)
 --
 --      Makes a delayinit argmatcher for the command.  A completion script can
 --      be a single line, using this:
@@ -48,7 +48,7 @@
 --
 -- Parser functions:
 --
---      function parser(context, flags, descriptions, hideflags, line)
+--  function parser(context, flags, descriptions, hideflags, line)
 --
 --      context         A container table for use by the parser function.
 --      flags           Use add_pending() to update flags.
@@ -56,7 +56,8 @@
 --      hideflags       A table of flag names to hide (table of strings).
 --      line            The help text line to be parsed.
 --
--- function add_pending(context, flags, descriptions, hideflags, pending)
+--  function add_pending(context, flags, descriptions, hideflags, pending)
+--
 --      context         Pass the context table from the parser() function.
 --      flags           Pass the flags table from the parser() function.
 --      descriptions    Pass the descriptions table from the parser() function.
@@ -70,12 +71,24 @@
 --                      }
 
 --------------------------------------------------------------------------------
+-- NOTE:  This script can be run as a standalone script for debugging purposes:
+--
+-- The following usage:
+--
+--      clink lua help_parser {parser_name} {command_line}
+--
+-- Prints the results of:
+--
+--      local help_parser = require('help_parser')
+--      help_parser.run(argmatcher, 'parser_name', 'command_line')
+
+--------------------------------------------------------------------------------
 if not clink then
     -- E.g. some unit test systems will run this module *outside* of Clink.
     return
 end
 if (clink.version_encoded or 0) < 10030010 then -- Requires _argmatcher:setdelayinit().
-    if log.info then
+    if log and log.info then
         log.info('The help_parser.lua module requires a newer version of Clink; please upgrade.')
     end
     return
@@ -94,8 +107,8 @@ local function sentence_casing(text)
 end
 
 --------------------------------------------------------------------------------
-local _file_keywords = { 'file', 'files', 'filename', 'glob' }
-local _dir_keywords = { 'dir', 'dirs' }
+local _file_keywords = { 'file', 'files', 'filename', 'filenames', 'glob' }
+local _dir_keywords = { 'dir', 'dirs', 'directory', 'directories', 'path', 'paths' }
 
 for _, k in ipairs(_file_keywords) do
     _file_keywords[' <' .. k .. '>'] = true
@@ -134,6 +147,7 @@ local function add_pending(context, flags, descriptions, hideflags, pending) -- 
             if not pending.flag:match('[:=]$') and not pending.display:match('^[ \t]') then -- luacheck: ignore 542
                 -- -x<n> or -x[n] or -Tn or etc.  Argmatchers must be separated
                 -- from flag by : or = or space.  So, no argmatcher.
+                --TODO: The onadvance and onlink callbacks make this possible.
             else
                 local args = clink.argmatcher()
                 if is_file_arg(pending.display) then
@@ -442,6 +456,7 @@ local function gnu_parser(context, flags, descriptions, hideflags, line)
             for _,f in ipairs(context.pending) do
                 if f.flag == '-NUM' then -- luacheck: ignore 542
                     -- Clink can't represent minus followed by any number.
+                    --TODO:  This is possible with onarg and onlink callbacks.
                 else
                     context.pending.flag = f.flag
                     context.pending.has_arg = f.has_arg or (f.has_arg == nil and context.pending.arginfo)
@@ -537,6 +552,11 @@ local _parsers = {
     ['curl'] = curl_parser,
     ['gnu'] = gnu_parser,
 }
+
+--------------------------------------------------------------------------------
+local function get_parser(parser)
+    return _parsers[parser:lower()]
+end
 
 --------------------------------------------------------------------------------
 local function run(argmatcher, parser, command, config)
@@ -654,4 +674,5 @@ return {
     run=run,
     make=make,
     add_pending=add_pending,
+    get_parser=get_parser,
 }
