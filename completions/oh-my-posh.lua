@@ -1,9 +1,13 @@
 -- argument completion for oh-my-posh
 require("arghelper")
 
+local file_matches = clink.argmatcher():addarg(clink.filematches)
+
 local global_flags = ({
-  { "-h", hide=true }, { "--help",              "help for command"  },
-  { "-c", hide=true }, { "--config", " <file>", "config (required)" },
+  { hide=true, "-h"                                                       },
+  {            "--help",                             "help for command"   },
+  { hide=true, "-c"       ..file_matches                                  },
+  {            "--config" ..file_matches,  " <file>", "config (required)" },
 })
 
 
