@@ -38,4 +38,3 @@ clink.argmatcher("perldoc")
     { "-i",                                       "Ignore case." },
     { "-V",                                       "Displays the version of perldoc you're running." },
   })
-:nofiles() -- PageName|ModuleName|ProgramName|URL
