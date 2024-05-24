@@ -46,3 +46,5 @@ clink.argmatcher("perl")
     { "-x" .. dir_matches,        "<dir>",          "ignore text before #!perl line (optionally cd to directory)" },
     { "-X",                                         "disable all warnings" },
   })
+  :chaincommand()
+
