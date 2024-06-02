@@ -131,6 +131,12 @@ local prompt_parser = clink.argmatcher()
 
 local feature_parser = clink.argmatcher():addarg("notice")
 
+local upgrade_parser = clink.argmatcher()
+  :_addexflags({
+    global_flags,
+    { "-f", hide=true }, { "--force", "force the upgrade even if the version is up to date" },
+  })
+
 
 clink.argmatcher("oh-my-posh")
   :_addexarg({
@@ -147,6 +153,7 @@ clink.argmatcher("oh-my-posh")
     { "print"      .. print_parser,      "Print the prompt/context"                                   },
     { "prompt"     .. prompt_parser,     "Set up the prompt for your shell (deprecated)"              },
     { "toggle",    " <flags>",           "Toggle a segment on/off on the fly"                         },
+    { "upgrade"    .. upgrade_parser,    "Upgrade when a new version is available."                   },
     { "version",                         "Print the version"                                          },
   })
   :_addexflags({
