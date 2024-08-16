@@ -1,5 +1,4 @@
 -- argument completion for perl
-clink.argmatcher("perl")
 require("arghelper")
 
 local file_matches       = clink.argmatcher():addarg(clink.filematches)
@@ -13,10 +12,31 @@ local split_matches      = clink.argmatcher():addarg({fromhistory=true})
 local extension_matches  = clink.argmatcher():addarg({fromhistory=true})
 local module_matches     = clink.argmatcher():addarg({fromhistory=true})
 local var_matches        = clink.argmatcher():addarg()
+local file_matches_loop  = clink.argmatcher():addarg(clink.filematches):loop()
+
+local function perl_files(word)
+  return {
+    clink.filematchesexact(word.."*.pl"),
+    clink.filematchesexact(word.."*.pm"),
+    clink.filematchesexact(word.."*.t")
+  }
+end
+
+-- Stop using the perl argmatcher after matching a script file. Return the
+-- argmatcher for the script if there is one; otherwise default to a basic
+-- matcher that just expects one or more files.
+local function perl_onlink(link, arg_index, word) -- luacheck: no unused
+  if word then
+      local ext = path.getextension(word)
+      if ext and ext:lower() == ".pl" then
+          return clink.getargmatcher(word) or file_matches_loop
+      end
+  end
+end
 
 clink.argmatcher("perl")
   :_addexflags({
-    { "-0"  .. rs_matches,         "<octal>",       "specify record separator (\0, if no argument)" },
+    { "-0"  .. rs_matches,         "<octal>",       "specify record separator (\\0, if no argument)" },
     { "-a",                                         "autosplit mode with -n or -p (splits $_ into @F)" },
     { "-C"  .. features_matches,   "<number|list>", "enables the listed Unicode features" },
     { "-c",                                         "check syntax only (runs BEGIN and CHECK blocks)" },
@@ -46,5 +66,4 @@ clink.argmatcher("perl")
     { "-x" .. dir_matches,        "<dir>",          "ignore text before #!perl line (optionally cd to directory)" },
     { "-X",                                         "disable all warnings" },
   })
-  :chaincommand()
-
+  :addarg({ perl_files, clink.dirmatches, onlink=perl_onlink })
