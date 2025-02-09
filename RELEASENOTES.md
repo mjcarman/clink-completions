@@ -1,5 +1,53 @@
 # Release Notes
 
+## 0.6.2 (Dec 28, 2024)
+
+  * [.net] Fixed edge case in `dotnet add [PROJECT] package` completions.
+
+## 0.6.1 (Dec 24, 2024)
+
+  * Updated `eza` completions.
+  * [.net] Updated `dotnet add [PROJECT] package` completions (#192).
+  * [git] Fixed `git status -uno` completion.
+  * Turned off debug logging in `gh` completions by default.
+
+## 0.6.0 (Oct 13, 2024)
+
+  * [git] Added support for git aliases that include flags or `!`.
+  * [git] Added support for input hints during `git` commands (input hints are new in Clink v1.7.0).
+  * [pip] Update to use the newer sysconfig since the older distutils.sysconfig has been deprecated for many years.
+  * [pip] Fixed some long standing bugs in the pip completions.
+  * Added completions for [Cloud Foundry CLI](https://github.com/cloudfoundry/cli).
+  * Added completions for `where`.
+  * Added support in various completion scripts for one-letter flags that can be concatenated together.
+  * Updated several completion scripts to be consistent about suppressing stderr output to avoid contaminating the prompt display.
+  * Updated to coexist better with .clinkprompt files (new in Clink v1.7.0).
+  * Fixed completions after `git checkout branchname -- `.
+
+## 0.5.4 (Jul 3, 2024)
+
+  * [git] Fix `git` completions for local branches to include packed refs.
+  * Fix `pip` completions to suppress error messages such as from python installation problems.
+
+## 0.5.3 (Jun 16, 2024)
+
+  * Add completions for [`gh`](https://github.com/cli/cli).
+  * Add completions for [`spicetify`](https://github.com/spicetify/cli).
+  * Add completions for [`nuke`](https://github.com/nuke-build/nuke).
+  * Update `scoop` completions.
+  * Minor updates to `git` completions.
+  * Minor updates to `dirx` completions.
+  * Fix completions for `dirx /`.
+  * Fix `findstr` completions to only accept flags up until a non-flag argument.
+  * Fix `scoop.lua` script to use `config.json` since Scoop has deprecated using environment variables for configuration.
+  * Add readme instructions for how to update clink-completions.
+
+## 0.5.2 (Mar 23, 2024)
+
+  * Add completions for the `reg` command in Windows.
+  * Update `rg` completions to be even closer to what the official rg completion script produces in the fish shell.
+  * Update `eza` completions.
+
 ## 0.5.1 (Mar 8, 2024)
 
   * Add completions for [`dirx`](https://github.com/chrisant996/dirx).

@@ -135,7 +135,7 @@ local list_of_flags = {
     { hide_unless="/b -b --bare", "--no-bare" },
     { "-c",                     "Display with colors" },
     { "--color" },
-    { hide_unless="/c -c --color", "--no-color" },
+    { "--no-color" },
     { "-g",                     "Show git file status" },
     { "-gg",                    "Show git repo status" },
     { "--git" },
@@ -318,8 +318,8 @@ end
 -- IMPORTANT: If slash_flags has an onarg callback, then it will replace the one
 -- from minus_flags, which would mess up both the DIRXCMD processing and also
 -- the hide_unless stuff in general.
-local minus_flags = { onarg=onarg_dirxcmd }
-local slash_flags = {}
+local minus_flags = { concat_one_letter_flags=true, onarg=onarg_dirxcmd }
+local slash_flags = { concat_one_letter_flags=true }
 
 local function copy_vars(entry, tbl)
     tbl.hide = entry.hide
@@ -333,11 +333,13 @@ for _, entry in ipairs(list_of_flags) do
     local slash = entry[1]:gsub("^%-", "/")
     local long = entry[1]:find("^%-%-") and true
 
-    local num = #entry
-    if num == 2 or num == 3 then
+    local len = #entry
+    if len == 2 or len == 3 then
         table.insert(minus_flags, copy_vars(entry, { minus, entry[2] }))
-        table.insert(slash_flags, copy_vars(entry, { slash, entry[2] }))
-    elseif num == 4 or long then
+        if not long then
+            table.insert(slash_flags, copy_vars(entry, { slash, entry[2] }))
+        end
+    elseif len == 4 or long then
         if entry[2] then
             table.insert(minus_flags, copy_vars(entry, { minus..entry[2], entry[3], entry[4] }))
         else

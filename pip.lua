@@ -1,25 +1,42 @@
--- -*- coding: utf-8 -*-
--- preamble: common routines
-
 local matchers = require("matchers")
 local w = require("tables").wrap
 
 local parser = clink.arg.new_parser
 
+local function get_packages(dir, token)
+    local list
+    if dir and dir ~= "" then
+        local finder = matchers.create_files_matcher(dir .. "\\*.dist-info")
+        list = finder(token)
+    end
+    return w(list)
+end
+
 local function pip_libs_list(token)
-    local handle = io.popen('python -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())"')
-    local python_lib_path = handle:read("*a")
-    handle:close()
+    local sysconfig = {}
 
-    -- trim spaces
-    python_lib_path = python_lib_path:gsub("^%s*(.-)%s*$", "%1")
+    local handle = io.popen('2>nul python -m sysconfig')
+    if handle then
+        for line in handle:lines() do
+            local name, value = line:match('^%s+(.-) = "(.*)"%s*$')
+            if name and value then
+                sysconfig[name] = value
+            end
+        end
+        handle:close()
+    end
 
-    local finder = matchers.create_files_matcher(python_lib_path .. "\\*.dist-info")
+    local libpaths = w()
+    table.insert(libpaths, sysconfig["platlib"])
+    table.insert(libpaths, sysconfig["purelib"])
+    libpaths = libpaths:dedupe()
 
-    local list = w(finder(token))
+    local list = w()
+    for _,libpath in ipairs(libpaths) do
+        list = list:concat(get_packages(libpath, token))
+    end
 
-    list =
-        list:map(
+    list = list:map(
         function(package)
             package = package:gsub("-[%d%.]+dist%-info$", "")
             return package

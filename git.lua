@@ -1,5 +1,3 @@
--- preamble: common routines
-
 local path_module = require('path')
 local git = require('gitutil')
 local matchers = require('matchers')
@@ -14,6 +12,21 @@ local parser = function (...)
 end
 
 -- luacheck: globals matchicons
+
+local argexpected = "Argument expected:  "
+local argoptional = "Optional argument:  "
+local function hintpfx(optional)
+    return optional and argoptional or argexpected
+end
+local function inc_num_args(user_data, word_index)
+    user_data.num_args = (user_data.num_args or 0) + 1
+    user_data.word_index = word_index
+end
+local function is_optional(user_data, word_index)
+    local u_num_args = user_data.num_args or 0
+    local u_word_index = user_data.word_index
+    return (u_num_args > 1) or (u_word_index and u_word_index < word_index)
+end
 
 if clink_version.supports_color_settings then
     settings.add('color.git.star', 'bright green', 'Color for preferred branch completions')
@@ -203,6 +216,8 @@ local function list_local_branches(dir)
 
     local result = w(path_module.list_files(git_dir..'/refs/heads', '/*',
         --[[recursive=]]true, --[[reverse_separator=]]true))
+    :concat(list_packed_refs(git_dir, 'heads'))
+    :sort():dedupe()
 
     return result
 end
@@ -530,7 +545,11 @@ local function checkout_spec_generator(token)
     end
 end
 
-local function checkout_dashdash(token)
+local function checkout_dashdash(token, _, _, _, user_data)
+    if user_data and user_data.shared_user_data and user_data.shared_user_data.has_arg1 then
+        return file_matches(token)
+    end
+
     if has_dot_dirs(token) then
         return file_matches(token)
     end
@@ -768,6 +787,7 @@ local placeholder_required_arg = parser({})
 -- collect from history separately.
 local abbrev_lengths = parser({5, 6, 8, 10, 12, 16, 20, 24, 32, 40})
 local batch_format_arg = parser({fromhistory=true, "%(objectname)", "%(objecttype)", "%(objectsize)", "%(objectsize:disk)", "%(deltabase)", "%(rest)"})
+local branches_args = parser({branches, hint="branch"}):loop(1)
 local clone_filter_arg = parser({fromhistory=true})
 local color_opts = parser({"true", "false", "always"})
 local commit_trailer_arg = parser({fromhistory=true})
@@ -821,8 +841,8 @@ local flagex__config = { '--config'..config_arg, ' key=value', '' }
 local flagex__depthdepth = { opteq=true, '--depth'..depth_arg, ' depth', '' }
 local flagex__encoding = { opteq=true, '--encoding='..parser({fromhistory=true, "ASCII", "UTF-8", "UTF-16", "UTF-16BE", "UTF-16LE", "UTF-32", "UTF-32BE", "UTF-32LE"}), 'encoding', '' }
 local flagex__gpgsignequals = { '--gpg-sign='..gpg_keyid_arg, 'keyid', '' }
-local flagex_s_mergestrategy = { '-s' .. merge_strategies, ' strategy', 'Use the given merge strategy' }
-local flagex__strategy = { opteq=true, '--strategy' .. merge_strategies, ' strategy', '' }
+local flagex_s_mergestrategy = { '-s'..merge_strategies, ' strategy', 'Use the given merge strategy' }
+local flagex__strategy = { opteq=true, '--strategy'..merge_strategies, ' strategy', '' }
 local flagex_u_uploadpack = { '-u'..placeholder_required_arg, ' upload-pack', 'Shortcut for --upload-pack' }
 local flagex__uploadpack = { opteq=true, '--upload-pack'..placeholder_required_arg, ' upload-pack', '' }
 local flagex_X_strategyoption = { '-X'..merge_recursive_options, ' option', 'Pass option into the merge strategy' }
@@ -860,6 +880,7 @@ local help_flags = {
 }
 
 local log_flags = {
+    concat_one_letter_flags=true,
     "--decorate", "--decorate="..parser({"short", "full", "auto", "no"}), "--no-decorate",
     "--decorate-refs="..regex_refs_arg, "--decorate-refs-exclude="..regex_refs_arg,
     "--source",
@@ -901,6 +922,7 @@ local log_flags = {
 }
 
 local log_history_flags = {
+    concat_one_letter_flags=true,
     "--follow",
     { "-L"..parser({fromhistory=true}), " start,end:file", "Trace evolution of range" },
     { "-L:"..parser({fromhistory=true}), "funcname:file", "Trace evolution of function" },
@@ -932,6 +954,7 @@ local log_history_flags = {
 }
 
 local commit_formatting_flags = {
+    concat_one_letter_flags=true,
     "--pretty",
     "--pretty="..pretty_formats_parser,
     "--format="..pretty_formats_parser,
@@ -956,6 +979,7 @@ local commit_formatting_flags = {
 }
 
 local diff_flags = {
+    concat_one_letter_flags=true,
     "--no-index",
     "--cached",
     "--staged",
@@ -1029,7 +1053,7 @@ local diff_flags = {
     "--find-copies-harder",
     { "-D", "Shortcut for --irreversible-delete" },
     "--irreversible-delete",
-    { "-l", " n", "Limit expensive rename/copy checks" },
+    { "-l"..placeholder_required_arg, " n", "Limit expensive rename/copy checks" },
     { opteq=true, "--diff-filter="..diff_filter_arg, "[ACDMRTUXB...*]", "" },
     --{ "-S", "string", "" },
     --{ "-G", "regex", "" },
@@ -1085,6 +1109,7 @@ local diff_flags = {
 }
 
 local fetch_flags = {
+    concat_one_letter_flags=true,
     '--all',
     { '-a', 'Synonym for --append' },
     '--append',
@@ -1125,6 +1150,7 @@ local fetch_flags = {
 }
 
 local merge_flags_common = {
+    concat_one_letter_flags=true,
     flagex_s_mergestrategy,
     flagex__strategy,
     flagex_X_strategyoption,
@@ -1143,6 +1169,7 @@ local merge_flags_common = {
 }
 
 local merge_flags = {
+    concat_one_letter_flags=true,
     "--continue",
     "--abort",
     "--quit",
@@ -1156,6 +1183,7 @@ local merge_flags = {
 }
 
 local stash_save_flags = {
+    concat_one_letter_flags=true,
     { "-p", "Interactively select hunks from diffs" },
     "--patch",
     { "-S", "Stash only changes that are currently staged" },
@@ -1166,11 +1194,14 @@ local stash_save_flags = {
     "--include-untracked",
     { "-a", "Stash all ignored and untracked files also" },
     "--all",
+    { "-m"..placeholder_required_arg, " msg", "Use the given msg as the stash description" },
+    { opteq=true, "--message"..placeholder_required_arg, " msg", "" },
     { "-q", "Quiet" },
     "--quiet",
 }
 
 local track_flags = {
+    concat_one_letter_flags=true,
     { '-t', 'Set upstream tracking for new branch' },
     '--track',
     '--track='..parser({'direct', 'inherit'}),
@@ -1178,7 +1209,7 @@ local track_flags = {
 }
 
 local untracked_flags = {
-    { "-u", "Show untracked files recursively" },
+    { "-u", "[mode]", "Show untracked files recursively" },
     { "-uno", "Show no untracked files" },
     { "-unormal", "Show untracked files and directories" },
     { "-uall", "Show untracked files recursively" },
@@ -1191,8 +1222,9 @@ local untracked_flags = {
 
 local add_parser = parser()
 :setendofflags()
-:addarg(add_spec_generator):loop()
+:addarg({add_spec_generator, hint="pathspec"}):loop()
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { "-n", "Don't actually add files" },
     "--dry-run",
@@ -1221,13 +1253,14 @@ local add_parser = parser()
     "--ignore-missing",
     "--sparse",
     { opteq=true, "--chmod="..parser({"+x", "-x"}) },
-    { opteq=true, "--pathspec-from-file="..files_parser },
+    { opteq=true, "--pathspec-from-file="..files_parser, "file", "" },
     "--pathspec-file-nul",
 })
 
 local apply_parser = parser()
 :setendofflags()
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     "--stat",
     "--numstat",
@@ -1243,8 +1276,8 @@ local apply_parser = parser()
     "--reverse",
     "--reject",
     { "-z", "Use NUL terminated format with --numstat" },
-    { "-p", " n", "Remove <n> leading path components" },
-    { "-C", " n", "Ensure at least <n> lines of surrounding context" },
+    { "-p", "n", "Remove <n> leading path components" },
+    { "-C", "n", "Ensure at least <n> lines of surrounding context" },
     "--unidiff-zero",
     "--apply",
     "--no-add",
@@ -1259,15 +1292,16 @@ local apply_parser = parser()
     { "-q", "Quiet; suppress stderr (no status or progress)" },
     "--quiet",
     "--recount",
-    { opteq=true, "--directory="..dirs_parser },
+    { opteq=true, "--directory="..dirs_parser, "dir", "" },
     "--unsafe-paths",
     "--allow-empty",
 })
 
 local blame_parser = parser()
 :setendofflags()
-:addarg(file_matches)
+:addarg({file_matches, hint="file"})
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     "--incremental",
     { "-b", "Show blank SHA1 for boundary commits" },
@@ -1310,6 +1344,7 @@ local blame_parser = parser()
 local branch_parser = parser()
 :setendofflags()
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { "-v", "Be verbose" },
     "--verbose",
@@ -1329,9 +1364,9 @@ local branch_parser = parser()
     "--abbrev", flagex__abbrevequals, "--no-abbrev",
     { "-a", "List local and remote tracking branches" },
     "--all",
-    { "-d" .. parser({branches}):loop(1), " branch", "Delete a branch" },
-    { opteq=true, "--delete" .. parser({branches}):loop(1), " branch", "" },
-    { "-D" .. parser({branches}):loop(1), " branch", "Shortcut for --delete --force" },
+    { "-d"..branches_args, " branch", "Delete a branch" },
+    { opteq=true, "--delete"..parser({branches}):loop(1), " branch", "" },
+    { "-D"..branches_args, " branch", "Shortcut for --delete --force" },
     { "-m", "Move or rename a branch" },
     "--move",
     { "-M", "Shortcut for --move --force" },
@@ -1360,6 +1395,7 @@ local branch_parser = parser()
 local catfile_parser = parser()
 :setendofflags()
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { '-t', 'Show type of object instead of content' },
     { '-s', 'Show size of object instead of content' },
@@ -1379,10 +1415,39 @@ local catfile_parser = parser()
     '--follow-symlinks',
 })
 
+local checkout_arg_hints_new_branch = {"start-point"}
+local checkout_arg_hints_normal = {"branch", "pathspec"}
+local function checkout_onarg1(_, _, _, _, user_data)
+    if user_data and user_data.shared_user_data then
+        user_data.shared_user_data.has_arg1 = true
+    end
+end
+local function checkout_onflag(arg_index, word, _, _, user_data)
+    if user_data and arg_index == 0 then
+        if word == "-b" or word == "-B" or word == "--orphan" then
+            user_data.new_branch = true
+        end
+    end
+end
+local function checkout_arg_hint(arg_index, _, _, _, user_data)
+    local h
+    if user_data and user_data.new_branch then
+        h = checkout_arg_hints_new_branch[arg_index]
+    else
+        h = checkout_arg_hints_normal[arg_index]
+    end
+    if h then
+        return hintpfx(arg_index ~= 1)..h
+    end
+end
+
 local checkout_parser = parser()
 :setendofflags()
-:addarg(checkout_spec_generator)
+:addarg({checkout_spec_generator, hint=checkout_arg_hint, onarg=checkout_onarg1})
+:addarg({file_matches, hint=checkout_arg_hint}):loop(2)
 :_addexflags({
+    concat_one_letter_flags=true,
+    onarg=checkout_onflag,
     help_flags,
     { '-q', 'Quiet; suppress feedback messages' },
     '--quiet',
@@ -1414,14 +1479,15 @@ local checkout_parser = parser()
     '--patch',
     '--ignore-skip-worktree-bits',
     '--ignore-other-worktrees',
-    '--pathspec-from-file='..files_parser,
+    { '--pathspec-from-file='..files_parser, "file", "" },
     '--pathspec-file-nul',
-    '--'..parser({checkout_dashdash}),
+    { '--'..parser({checkout_dashdash}):loop(), " pathspec", "" },
 })
 
 local cherrypick_parser = parser()
 :setendofflags()
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { "-e", "Edit message before committing" },
     "--edit",
@@ -1454,7 +1520,10 @@ local cherrypick_parser = parser()
 
 local clone_parser = parser()
 :setendofflags()
+:addarg({file_matches, hint=argexpected.."repository"})
+:addarg({file_matches, hint=argoptional.."directory"})
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { opteq=true, '--template'..dirs_parser, ' dir', '' },
     { '-l', 'Clone from local repo (via symlinks)' },
@@ -1485,7 +1554,7 @@ local clone_parser = parser()
     { opteq=true, '--reference-if-able'..files_parser, 'repo', '' },
     '--dissociate',
     '--remote-submodules', '--no-remote-submodules',
-    { opteq=true, '--separate-git-dir='..dirs_parser },
+    { opteq=true, '--separate-git-dir='..dirs_parser, 'dir', '' },
     flagex_c_config,
     flagex__config,
     flagex__depthdepth,
@@ -1503,6 +1572,7 @@ local clone_parser = parser()
 local commit_parser = parser()
 :setendofflags()
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { "-a", "Auto-stage modified/deleted files" },
     "--all",
@@ -1546,7 +1616,7 @@ local commit_parser = parser()
     "--include",
     { "-o", "Shortcut for --only" },
     "--only",
-    '--pathspec-from-file='..files_parser,
+    { opteq=true, '--pathspec-from-file='..files_parser, 'file', '' },
     '--pathspec-file-nul',
     untracked_flags,
     { "-v", "Be verbose; show staged diffs" },
@@ -1566,8 +1636,11 @@ local commit_parser = parser()
 
 local config_parser = parser()
 :setendofflags()
-:addarg(git_options)
+-- TODO: subcommands: list, get, set, unset, rename-section, remove-section, edit
+-- TODO: deprecated modes
+:addarg({git_options, hint=argexpected.."name"})
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     "--replace-all",
     "--add",
@@ -1611,31 +1684,37 @@ local config_parser = parser()
 
 local diff_parser = parser()
 :setendofflags()
-:addarg(local_or_remote_branches, file_matches)
+:addarg({local_or_remote_branches, file_matches, hint=argoptional.."commit or path"}):loop()
 :_addexflags(diff_flags)
 :_addexflags(help_flags)
+:_addexflags({"--"..parser({file_matches, hint=argoptional.."pathspec"}):loop()})
 
 local difftool_parser = parser()
 :setendofflags()
+:addarg({file_matches, hint=argoptional.."commit or path"}):loop()
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     '-d', '--dir-diff',
     '-y', '--no-prompt', '--prompt',
-    '--rotate-to='..files_parser,
-    '--skip-to='..files_parser,
-    '-t', '--tool='..placeholder_required_arg, -- TODO: complete tool (take from config)
+    { '--rotate-to='..files_parser, 'file', '' },
+    { '--skip-to='..files_parser, 'file', '' },
+    { '-t'..placeholder_required_arg, ' tool', '' },                    -- TODO: complete tool (take from config)
+    { opteq=true, '--tool='..placeholder_required_arg, 'tool', '' },    -- TODO: complete tool (take from config)
     '--tool-help',
     '--symlinks', '--no-symlinks',
     { '-x'..difftool_extcmd_arg, ' command', '' },
-    { '--extcmd='..difftool_extcmd_arg, ' command', '' },
+    { opteq=true, '--extcmd='..difftool_extcmd_arg, 'command', '' },
     '-g', '--gui', '--no-gui',
     '--trust-exit-code', '--no-trust-exit-code',
 })
+:_addexflags({"--"..parser({file_matches, hint=argoptional.."pathspec"}):loop()})
 
 local fetch_parser = parser()
 :setendofflags()
-:addarg(remotes)
+:addarg({remotes, hint=argoptional.."repository" })
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     '--write-fetch-head', '--no-write-fetch-head',
     '--multiple',
@@ -1663,6 +1742,7 @@ local fetch_parser = parser()
 local help_parser = parser()
 :setendofflags()
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { "-a",                             "Print all available commands" },
     { "--all",                          "Print all available commands" },
@@ -1699,16 +1779,36 @@ end
 
 local log_parser = parser()
 :setendofflags()
+:addarg({file_matches, hint=argoptional.."revision-range or pathspec"})
+:addarg({file_matches, hint=argoptional.."pathspec"}):loop(2)
 :_addexflags(log_flags)
 :_addexflags(log_history_flags)
 :_addexflags(diff_flags)
 :_addexflags(commit_formatting_flags)
 :_addexflags(help_flags)
+:_addexflags({"--"..parser({file_matches, hint=argoptional.."pathspec"}):loop()})
+
+local function merge_onarg(arg_index, word, word_index, _, user_data)
+    if user_data then
+        if arg_index > 0 then
+            inc_num_args(user_data, word_index)
+        elseif word == "--continue" or word == "--abort" or word == "--quit" then
+            user_data.merge_in_progress = true
+        end
+    end
+end
+local function merge_arg_hint(_, _, word_index, _, user_data)
+    if user_data and not user_data.merge_in_progress then
+        return hintpfx(is_optional(user_data, word_index)).."commit"
+    end
+end
 
 local merge_parser = parser()
 :setendofflags()
-:addarg(local_or_remote_branches)
+:addarg({local_or_remote_branches, onarg=merge_onarg, hint=merge_arg_hint}):loop()
 :_addexflags({
+    concat_one_letter_flags=true,
+    onarg=merge_onarg,
     help_flags,
     "--commit", "--no-commit",
     { "-e", "Edit the generated message before commit" },
@@ -1733,9 +1833,10 @@ local merge_parser = parser()
 
 local pull_parser = parser()
 :setendofflags()
-:addarg(remotes)
-:addarg(branches)
+:addarg({remotes, hint=argoptional.."repository"})
+:addarg({branches, hint=argoptional.."refspec"})
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { "-q", "Quiet; only report errors" },
     "--quiet",
@@ -1765,9 +1866,10 @@ local pull_parser = parser()
 
 local push_parser = parser()
 :setendofflags()
-:addarg(remotes)
-:addarg(push_branch_spec)
+:addarg({remotes, hint=argoptional.."repository"})
+:addarg({push_branch_spec, hint=argoptional.."refspec"})
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     '--all',
     '--prune',
@@ -1789,7 +1891,7 @@ local push_parser = parser()
     { '-f', 'Synonym for --force' },
     '--force',
     '--force-if-includes', '--no-force-if-includes',
-    { opteq=true, '--repo='..repo_arg },
+    { opteq=true, '--repo='..repo_arg, 'repo', '' },
     { '-u', 'Add upstream tracking reference' },
     '--set-upstream',
     '--thin', '--no-thin',
@@ -1808,13 +1910,40 @@ local push_parser = parser()
     '--ipv6',
 })
 
+local rebase_arg_hints_normal = {"upstream repository", "branch"}
+local rebase_arg_no_args = {
+    ["--continue"] = true,
+    ["--skip"] = true,
+    ["--abort"] = true,
+    ["--quit"] = true,
+    ["--edit-todo"] = true,
+}
+local function rebase_onarg(arg_index, word, _, _, user_data)
+    if user_data and arg_index == 0 then
+        if rebase_arg_no_args[word] then
+            user_data.no_args = true
+        end
+    end
+end
+local function rebase_arg_hint(arg_index, _, _, _, user_data)
+    local h
+    if user_data and not user_data.no_args then
+        h = rebase_arg_hints_normal[arg_index]
+    end
+    if h then
+        return argoptional..h
+    end
+end
+
 local rebase_parser = parser()
 :setendofflags()
-:addarg(local_or_remote_branches)
-:addarg(branches)
+:addarg({local_or_remote_branches, hint=rebase_arg_hint})
+:addarg({branches, hint=rebase_arg_hint})
 :_addexflags({
+    concat_one_letter_flags=true,
+    onarg=rebase_onarg,
     help_flags,
-    { opteq=true, '--onto' .. parser({branches}), ' newbase', '' },
+    { opteq=true, '--onto'..parser({branches}), ' newbase', '' },
     '--keep-base',
     '--continue',
     '--abort',
@@ -1829,7 +1958,7 @@ local rebase_parser = parser()
     '--show-current-patch',
     { '-m', 'Use merging strategies to rebase' },
     '--merge',
-    { '-C', ' n', 'Ensure at least <n> lines of surrounding context' },
+    { '-C', 'n', 'Ensure at least <n> lines of surrounding context' },
     '--no-ff',
     { '-f', 'Individually replay rebased commits' },
     '--force-rebase',
@@ -1854,30 +1983,61 @@ local remote_parser = parser()
 :setendofflags()
 :addarg(
     "add" ..parser(
+        {hint=argexpected.."name"},
+        {hint=argexpected.."URL"},
         "-t"..parser({branches}),
         "-m"..placeholder_required_arg,
         "-f",
         "--mirror="..parser({"fetch", "push"}),
         "--tags", "--no-tags"
     ),
-    "rename"..parser({remotes}),
-    "remove"..parser({remotes}),
-    "rm"..parser({remotes}),
-    "set-head"..parser({remotes}, {branches},
+    "rename"..parser(
+        {remotes, hint=argexpected.."old name"},
+        {hint=argexpected.."new name"}
+    ),
+    "remove"..parser({remotes, hint=argexpected.."name"}),
+    "rm"..parser({remotes, hint=argexpected.."name"}),
+    "set-head"..parser(
+        {remotes, hint=argexpected.."name"},
+        {branches, hint=argoptional.."branch"},
         "-a", "--auto",
         "-d", "--delete"
     ),
-    "set-branches"..parser("--add", {remotes}, {branches}),
-    "get-url"..parser({remotes}, "--push", "--all"),
-    "set-url"..parser(
-        "--add"..parser("--push", {remotes}),
-        "--delete"..parser("--push", {remotes})
+    "set-branches"..parser(
+        {remotes, hint=argexpected.."name"},
+        {branches, hint=argexpected.."branch"},
+        {branches, hint=argoptional.."branch"},
+        "--add"
+    ):loop(3),
+    "get-url"..parser(
+        {remotes, hint=argexpected.."name"},
+        "--push", "--all"
     ),
-    "show"..parser("-n", {remotes}),
-    "prune"..parser("-n", "--dry-run", {remotes}),
-    "update"..parser({remotes}, "-p", "--prune")
+    "set-url"..parser(
+        {remotes, hint=argexpected.."name"},
+        {hint=argexpected.."new URL"},
+        {hint=argoptional.."old URL"},
+        "--add"..parser("--push", {remotes, hint=argexpected.."name"}, {hint=argexpected.."new URL"}),
+        "--delete"..parser("--push", {remotes, hint=argexpected.."name"}, {hint=argexpected.."URL"})
+    ),
+    "show"..parser(
+        {remotes, hint=argexpected.."name"},
+        {remotes, hint=argoptional.."name"},
+        "-n"
+    ):loop(2),
+    "prune"..parser(
+        {remotes, hint=argexpected.."name"},
+        {remotes, hint=argoptional.."name"},
+        "-n", "--dry-run"
+    ):loop(2),
+    "update"..parser(
+        {remotes, hint=argexpected.."group or remote name"},
+        {remotes, hint=argoptional.."group or remote name"},
+        "-p", "--prune"
+    ):loop(2)
 )
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { "-v", "Be verbose" },
     "--verbose",
@@ -1885,22 +2045,26 @@ local remote_parser = parser()
 
 local reset_parser = parser()
 :setendofflags()
-:addarg(local_or_remote_branches)   -- TODO: Add commit completions
+:addarg({local_or_remote_branches, hint=argoptional.."tree-ish"})   -- TODO: Add commit completions
+:addarg({file_matches, hint=argoptional.."path"}):loop(2)
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { "-q", "Quiet; only report errors" },
     { "-p", "Interactively select hunks from diffs" },
     "--patch",
-    { opteq=true, "--pathspec-from-file="..files_parser }, --"--stdin",
+    { opteq=true, "--pathspec-from-file="..files_parser, "file", "" }, --"--stdin",
     "--pathspec-file-nul", --"-z",
     "--soft", "--mixed", "--hard",
     "--merge", "--keep", "--no-recurse-submodules"
 })
+:_addexflags({"--"..parser({file_matches, hint=argoptional.."pathspec"}):loop()})
 
 local restore_parser = parser()
 :setendofflags()
-:addarg(file_matches)
+:addarg({file_matches, hint=argoptional.."pathspec"}):loop()
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { "-s"..files_parser, " tree", "Synonym for --source" },
     { opteq=true, "--source"..files_parser, " tree", "" },
@@ -1923,13 +2087,16 @@ local restore_parser = parser()
     "--recurse-submodules", "--no-recurse-submodules",
     "--overlay",
      --"--no-overlay",
-    { opteq=true, "--pathspec-from-file="..files_parser },
+    { opteq=true, "--pathspec-from-file="..files_parser, "file", "" },
     "--pathspec-file-nul"
 })
 
 local revparse_parser = parser()
 :setendofflags()
+:addarg({file_matches, hint=argexpected.."arg"})
+:addarg({file_matches, hint=argoptional.."arg"}):loop(2)
 :_addexflags({
+    concat_one_letter_flags=true,
     { "--parseopt", "Use option parsing mode" },
     { "--sq-quote", "Use shell quoting mode" },
     { "--keep-dashdash", "With --parseopt, echo the first -- instead of skipping it" },
@@ -1986,9 +2153,31 @@ local revparse_parser = parser()
     { opteq=true, "--before="..placeholder_required_arg, "date", "Parse the date string and output corresponding --max-age= arg for git rev-list" },
 })
 
+local revert_arg_no_args = {
+    ["--continue"] = true,
+    ["--skip"] = true,
+    ["--abort"] = true,
+    ["--quit"] = true,
+}
+local function revert_onarg(arg_index, word, _, _, user_data)
+    if user_data and arg_index == 0 then
+        if revert_arg_no_args[word] then
+            user_data.no_args = true
+        end
+    end
+end
+local function revert_arg_hint(_, _, _, _, user_data)
+    if user_data and not user_data.no_args then
+        return argoptional.."commit"
+    end
+end
+
 local revert_parser = parser()
 :setendofflags()
+:addarg({onarg=revert_onarg, hint=revert_arg_hint}):loop()
 :_addexflags({
+    concat_one_letter_flags=true,
+    onarg=revert_onarg,
     help_flags,
     { "-e", "Edit message before committing" },
     "--edit",
@@ -2016,17 +2205,17 @@ local revert_parser = parser()
 
 local show_parser = parser()
 :setendofflags()
+:addarg({hint=argoptional.."object"}):loop()
 :_addexflags(help_flags)
 :_addexflags(diff_flags)
 :_addexflags(commit_formatting_flags)
+:_addexflags({"--"..parser({file_matches, hint=argoptional.."pathspec"}):loop()})
 
 local stash_parser = parser()
 :setendofflags()
 :addarg(
     "push"..parser():_addexflags({
         stash_save_flags,
-        { "-m"..placeholder_required_arg, " msg", "Use the given msg as the stash description" },
-        { opteq=true, "--message"..placeholder_required_arg, " msg", "" },
         { opteq=true, "--pathspec-from-file="..files_parser },
         "--pathspec-file-nul",
     }),
@@ -2034,12 +2223,12 @@ local stash_parser = parser()
         stash_save_flags,
     }),
     "list"..parser():_addexflags(commit_formatting_flags):_addexflags(diff_flags):_addexflags(log_flags),
-    "show"..parser({stashes}, "-u", "--include-untracked", "--only-untracked"):_addexflags(diff_flags),
-    "pop"..parser({stashes}, "--index", "-q", "--quiet"),
-    "apply"..parser({stashes}, "--index", "-q", "--quiet"),
-    "branch"..parser({branches}, {stashes}),
+    "show"..parser({stashes, hint=argoptional.."stash"}, "-u", "--include-untracked", "--only-untracked"):_addexflags(diff_flags),
+    "pop"..parser({stashes, hint=argoptional.."stash"}, "--index", "-q", "--quiet"),
+    "apply"..parser({stashes, hint=argoptional.."stash"}, "--index", "-q", "--quiet"),
+    "branch"..parser({branches, hint=argexpected.."branch"}, {stashes, hint=argoptional.."stash"}),
     "clear",
-    "drop"..parser({stashes}, "-q", "--quiet")
+    "drop"..parser({stashes, hint=argoptional.."stash"}, "-q", "--quiet")
 )
 :_addexflags({
     help_flags,
@@ -2047,7 +2236,9 @@ local stash_parser = parser()
 
 local status_parser = parser()
 :setendofflags()
+:addarg({file_matches, hint=argoptional.."pathspec"})
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { '-s', 'Give output in short format' },
     '--short',
@@ -2076,46 +2267,117 @@ local status_parser = parser()
     { '--find-renames='..placeholder_required_arg, 'n', '' },
 })
 
+local submodule_add_parser = parser()
+:setendofflags()
+:addarg({dir_matches, hint=argexpected.."repository"})
+:addarg({file_matches, hint=argoptional.."path"})
+:_addexflags({
+    concat_one_letter_flags=true,
+    { '-b'..placeholder_required_arg, ' branch', '' },
+    '-f', '--force',
+    { opteq=true, '--name'..placeholder_required_arg, ' name', '' },
+    { opteq=true, '--reference'..placeholder_required_arg, ' repo_url', '' },
+    { opteq=true, '--depth'..placeholder_required_arg, ' depth', '' },
+})
+:nofiles()
+
+local submodule_status_parser = parser()
+:setendofflags()
+:addarg({file_matches, hint=argoptional.."path"}):loop()
+:addflags('--cached', '--recursive')
+
+local submodule_init_parser = parser()
+:setendofflags()
+:addarg({file_matches, hint=argoptional.."path"}):loop()
+
+local submodule_deinit_parser = parser()
+:setendofflags()
+:addarg({
+    file_matches,
+    onarg=function(_, _, word_index, _, user_data)
+        inc_num_args(user_data, word_index)
+    end,
+    hint=function(_, _, word_index, _, user_data)
+        if not user_data or not user_data.all then
+            return hintpfx(is_optional(user_data, word_index)).."path"
+        end
+    end,
+}):loop()
+:addflags({'-f', '--force', '--all', onarg=function(_, word, _, _, user_data)
+    if user_data and word == "--all" then
+        user_data.all = true
+    end
+end})
+
+local submodule_update_parser = parser()
+:setendofflags()
+:addarg({file_matches, hint=argoptional.."path"}):loop()
+:_addexflags({
+    concat_one_letter_flags=true,
+    '--init',
+    '--remote',
+    '-N', '--no-fetch',
+    '--recommend-shallow', '--no-recommend-shallow',
+    '-f', '--force',
+    '--checkout', '--rebase', '--merge',
+    { opteq=true, '--reference'..placeholder_required_arg, ' repo_url', '' },
+    { opteq=true, '--depth'..placeholder_required_arg, ' depth', '' },
+    '--recursive',
+    { opteq=true, '--jobs'..placeholder_required_arg, ' n', '' },
+    '--single-branch', '--no-single-branch',
+})
+
+local submodule_set_branch_parser = parser()
+:setendofflags()
+:addarg({file_matches, hint=argexpected.."path"})
+:_addexflags({
+    concat_one_letter_flags=true,
+    { '-b'..placeholder_required_arg, ' branch', '' },
+    { opteq=true, '--branch'..placeholder_required_arg, ' branch', '' },
+    '-d', '--default',
+})
+:nofiles()
+
+local submodule_set_url_parser = parser()
+:setendofflags()
+:addarg({file_matches, hint=argexpected.."path"})
+:addarg({placeholder_required_arg, hint=argexpected.."URL"})
+:nofiles()
+
+local submodule_summary_parser = parser()
+:setendofflags()
+:addarg({file_matches, hint=argoptional.."commit or path"})
+:addarg({file_matches, hint=argoptional.."path"}):loop(2)
+:_addexflags({
+    '--cached',
+    '--files',
+    { '-n'..summary_limit_arg, ' n', '' },
+    { opteq=true, '--summary-limit'..summary_limit_arg, ' n', '' },
+})
+
+local submodule_foreach_parser = parser()
+:setendofflags()
+:addflags('--recursive')
+:chaincommand()
+
+local submodule_sync_parser = parser()
+:setendofflags()
+:addarg({file_matches, hint=argoptional.."path"}):loop()
+:addflags('--recursive')
+
 local submodule_parser = parser()
 :setendofflags()
 :_addexarg({
-    'add'..parser():_addexflags({
-        { '-b'..placeholder_required_arg, ' branch', '' },
-        '-f', '--force',
-        { opteq=true, '--name'..placeholder_required_arg, ' name', '' },
-        { opteq=true, '--reference'..placeholder_required_arg, ' repo_url', '' },
-        { opteq=true, '--depth'..placeholder_required_arg, ' depth', '' },
-    }),
-    'status'..parser('--cached', '--recursive'),
-    'init',
-    'deinit'..parser('-f', '--force', '--all'),
-    'update'..parser():_addexflags({
-        '--init',
-        '--remote',
-        '-N', '--no-fetch',
-        '--recommend-shallow', '--no-recommend-shallow',
-        '-f', '--force',
-        '--checkout', '--rebase', '--merge',
-        { opteq=true, '--reference'..placeholder_required_arg, ' repo_url', '' },
-        { opteq=true, '--depth'..placeholder_required_arg, ' depth', '' },
-        '--recursive',
-        { opteq=true, '--jobs'..placeholder_required_arg, ' n', '' },
-        '--single-branch', '--no-single-branch',
-    }),
-    'set-branch'..parser():_addexflags({
-        { '-b'..placeholder_required_arg, ' branch', '' },
-        { opteq=true, '--branch'..placeholder_required_arg, ' branch', '' },
-        '-d', '--default',
-    }),
-    'set-url'..parser():addarg(file_matches):addarg(placeholder_required_arg):nofiles(),
-    'summary'..parser():_addexflags({
-        '--cached',
-        '--files',
-        { '-n'..summary_limit_arg, ' n', '' },
-        { opteq=true, '--summary-limit'..summary_limit_arg, ' n', '' },
-    }),
-    { 'foreach'..parser('--recursive'):addarg({fromhistory=true}), ' shell_command', '' },
-    'sync'..parser('--recursive'),
+    'add'..submodule_add_parser,
+    'status'..submodule_status_parser,
+    'init'..submodule_init_parser,
+    'deinit'..submodule_deinit_parser,
+    'update'..submodule_update_parser,
+    'set-branch'..submodule_set_branch_parser,
+    'set-url'..submodule_set_url_parser,
+    'summary'..submodule_summary_parser,
+    { 'foreach'..submodule_foreach_parser, ' shell_command', '' },
+    'sync'..submodule_sync_parser,
     'absorbgitdirs',
 })
 :_addexflags({
@@ -2162,10 +2424,25 @@ local svn_parser = parser()
     help_flags,
 })
 
+local function switch_onarg(arg_index, word, _, _, user_data)
+    if user_data and arg_index == 0 then
+        if word == "-c" or word == "-C" or word == "--create" or word == "--force-create" then
+            user_data.switch_create_branch = true
+        end
+    end
+end
+local function switch_arg_hint(_, _, _, _, user_data)
+    if user_data and not user_data.switch_create_branch then
+        return argexpected.."branch"
+    end
+end
+
 local switch_parser = parser()
 :setendofflags()
-:addarg(local_or_remote_branches)
+:addarg({local_or_remote_branches, hint=switch_arg_hint})
 :_addexflags({
+    concat_one_letter_flags=true,
+    onarg=switch_onarg,
     help_flags,
     { '-c'..placeholder_required_arg, ' new-branch', 'Create new branch' },
     { opteq=true, '--create'..placeholder_required_arg, ' new-branch', '' },
@@ -2191,13 +2468,15 @@ local switch_parser = parser()
 
 local tag_d_parser = parser()
 :setendofflags()
-:addarg(tags)
-:loop()
+:addarg({tags, hint=argexpected.."tagname"})
+:addarg({tags, hint=argoptional.."tagname"}):loop(2)
 
 local tag_l_parser = parser()
 :setendofflags()
-:addarg(file_matches)
+:addarg({tags, hint=argexpected.."tagname"})
+:addarg({tags, hint=argoptional.."tagname"}):loop(2)
 :_addexflags({
+    concat_one_letter_flags=true,
     { '--create-reflog' },
     { opteq=true, '--format='..pretty_formats_parser, 'format', '' },
     { '--color' },
@@ -2213,23 +2492,23 @@ local tag_l_parser = parser()
     { opteq=true, flag__columnequals, 'options', '' },
     { '--no-column' },
 })
-:loop()
 
 local tag_v_parser = parser()
 :setendofflags()
-:addarg(tags)
+:addarg({tags, hint=argexpected.."tagname"})
+:addarg({tags, hint=argoptional.."tagname"}):loop(2)
 :_addexflags({
     { opteq=true, '--format='..pretty_formats_parser, 'format', '' },
     { '--color' },
     { '--color='..parser({"always", "auto", "never"}), 'when', '' },
 })
-:loop()
 
 local tag_parser = parser()
 :setendofflags()
-:addarg(tags)           -- tag
-:addarg(file_matches)   -- commit|object
+:addarg({tags, hint=argexpected.."tagname"})                    -- tag
+:addarg({file_matches, hint=argoptional.."commit or object"})   -- commit|object
 :_addexflags({
+    concat_one_letter_flags=true,
     help_flags,
     { '-a', 'Make an unsigned, annotated tag object' },
     { '--annotate' },
@@ -2263,9 +2542,10 @@ local worktree_parser = parser()
 :setendofflags()
 :addarg(
     "add"..parser(
-        {dir_matches},
-        {branches}
+        {dir_matches, hint=argexpected.."path"},
+        {branches, hint=argoptional.."commit-ish"}
     ):_addexflags({
+        concat_one_letter_flags=true,
         "-f", "--force",
         "--detach",
         "--checkout",
@@ -2279,6 +2559,7 @@ local worktree_parser = parser()
     }),
     "move",
     "prune"..parser():_addexflags({
+        concat_one_letter_flags=true,
         "-n", "--dry-run",
         "-v", "--verbose",
         { "--expire", " expire", "" },
@@ -2293,12 +2574,17 @@ local worktree_parser = parser()
 --------------------------------------------------------------------------------
 -- The gitk command parser.
 --
+-- Optional revision range.
+-- Followed by zero or more path patterns.
+--
 -- Note: gitk only supports "--flag=param" syntax; not "--flag param".
 
 local disk_usage_parser = parser():addarg("human")
 
 local gitk_parser = parser()
 :setendofflags()
+:addarg({file_matches, hint=argoptional.."revision-range or pathspec"})
+:addarg({file_matches, hint=argoptional.."pathspec"}):loop(2)
 :_addexflags({
     -- From gitk source code:
     { hide=true, "-d" },        -- ??
@@ -2387,8 +2673,8 @@ local gitk_parser = parser()
     { "--author="..person_arg, "pattern", "" },
     { "--committer="..person_arg, "pattern", "" },
     { "--grep="..placeholder_required_arg, "pattern", "" },
-    { "-i", "Case insensitive regex matching" },
-    { "-E", "Use extended regex patterns" },
+    { "-i",                     "Case insensitive regex matching" },
+    { "-E",                     "Use extended regex patterns" },
     "--remove-empty",
     "--first-parent",
     "--cherry-pick",
@@ -2437,8 +2723,7 @@ local gitk_parser = parser()
     "--dirstat",
     -- TODO: add others from git rev-list documentation.
 })
--- Optional revision range.
--- Followed by zero or more path patterns.
+:_addexflags({"--"..parser({file_matches, hint=argoptional.."pathspec"}):loop()})
 
 if clink.classifier then
     local gitk_classifier = clink.classifier()
@@ -2697,6 +2982,7 @@ local other_commands = {
 
 -- This is the set of flags for git itself (versus flags for commands in git).
 local git_flags = {
+    concat_one_letter_flags=true,
     { "--version",                          "Print the git suite version" },
     { "--help"..help_parser, " [...]",      "Print general help, or help on a topic" },
     { "-C"..dirs_parser, " path",           "Run as if git was started in PATH" },
@@ -2771,10 +3057,28 @@ local function init(argmatcher, full_init)
     -- function, the sort order when displaying completions is defined by the
     -- alias function.  But these do affect input line parsing and coloring.
     local aliases = get_git_aliases()
+    local complex, chain
     for _, a in ipairs(aliases) do
-        local linked = linked_parsers[a.command]
+        local linked
+        if not clink_version.supports_onalias then
+            linked = linked_parsers[a.command]
+        end
         if linked then
             table.insert(commands, a.name..linked)
+        else
+            local bang = a.command:match("^%!") and true or nil
+            local command = a.command:sub(bang and 2 or 1)
+            complex = complex or {}
+            chain = chain or {}
+            complex[a.name] = command
+            chain[a.name] = bang
+            table.insert(commands, a.name)
+        end
+    end
+
+    if complex then
+        commands.onalias = function(arg_index, word, word_index, line_state, user_data) -- luacheck: no unused
+            return complex[word], chain[word]
         end
     end
 
