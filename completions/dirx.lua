@@ -69,10 +69,25 @@ local sorts = mcf.addcharflagsarg(clink.argmatcher(), {
     { "-",          "Prefix to reverse order" },
 })
 
+local sizes = mcf.addcharflagsarg(clink.argmatcher(), {
+    { "a",          "Use the Allocation size" },
+    { "c",          "Use the Compressed size" },
+    { "f",          "Use the File size (default)" },
+    { "S",          "Show long file sizes" },
+})
+
+local times = mcf.addcharflagsarg(clink.argmatcher(), {
+    { "a",          "Use the Access time" },
+    { "c",          "Use the Creation time" },
+    { "w",          "Use the Write time (default)" },
+    { "T",          "Show long dates and times" },
+})
+
 --------------------------------------------------------------------------------
 -- Argument sub-parsers.
 
 local helps = clink.argmatcher():_addexarg({
+    { "alphabetical", "Display help text for flags in alphabetical order" },
     { "colors",     "Help on color coding the file list" },
     { "colorsamples", "Display ANSI color codes" },
     { "defaultcolors", "Print the default color string" },
@@ -133,6 +148,8 @@ local list_of_flags = {
     { "-b",                     "Bare mode; only display names" },
     { "--bare" },
     { hide_unless="/b -b --bare", "--no-bare" },
+    { "-B",                     "Selects default options for a concise almost-bare view" },
+    { "--almost-bare" },
     { "-c",                     "Display with colors" },
     { "--color" },
     { "--no-color" },
@@ -191,14 +208,17 @@ local list_of_flags = {
     { "-L", levels, " depth",   "Limit depth of recursion with -s" },
     { opteq=true, "--levels=", levels, "depth", "" },
     { hide=true, opteq=true, "--level=", levels, "depth", "" },
+    { hide=true, "-o",          "" },
     { "-o:", sorts, "options",  "List files in sorted order" },
     { "-X",                     "Reset skipped types" },
     { "-X:", skips, "types",    "Skip types during -s" },
     { opteq=true, "--skip=", skips, "types", "" },
+    { "--digit-sort" },
     { "--git-ignore" },
     { hide_unless="--git-ignore", "--no-git-ignore" },
     { "--hide-dot-files" },
     { hide_unless="--hide-dot-files --nix", "--no-hide-dot-files" },
+    { "--numeric-sort" },
     { "--reverse" },
     { hide_unless="--reverse", "--no-reverse" },
     { "--string-sort" },
@@ -217,19 +237,21 @@ local list_of_flags = {
     { hide_unless="/r -r /: -: --streams", "--no-streams" },
     { "-S",                     "List file size in wide modes" },
     { "--size" },
-    { hide_unless="/f -f --size /S -S /Sa -Sa /Sc -Sc /Sf -Sf /SS -SS /z -z --fat /Z -Z /l -l --long", "--no-size" },
+    { "--no-size" },
     { "-Sa",                    "Use the Allocation size" },
     { "-Sc",                    "Use the Compressed size" },
     { "-Sf",                    "Use the File size (default)" },
+    { hide=true, "-S:", sizes, "which", "" },
     { "-t",                     "Display file attributes" },
     { "--attributes" },
     { hide_unless="/t -t --attributes --nix", "--no-attributes" },
     { "-T",                     "List file time in wide modes" },
     { "--time" },
-    { hide_unless="/f -f --time /T -T /Ta -Ta /Tc -Tc /Tw -Tw /TT -TT /z -z --fat /Y -Y /l -l --long", "--no-time" },
+    { "--no-time" },
     { "-Ta",                    "Use the Access time" },
     { "-Tc",                    "Use the Creation time" },
     { "-Tw",                    "Use the Write time (default)" },
+    { hide=true, "-T:", times, "which", "" },
     { "-x",                     "Display 8.3 short file names" },
     { "--short-names" },
     { hide_unless="/x -x --short-names", "--no-short-names" },
@@ -253,7 +275,7 @@ local list_of_flags = {
     { "--bare-relative" },
     { hide_unless="--bare-relative", "--no-bare-relative" },
     { "--classify" },
-    { hide_unless="--classify", "--no-classify" },
+    { "--no-classify" },        -- Don't hide because it can be used to disable dir brackets.
     { "--compact" },
     { hide_unless="--compact", "--no-compact" },
     { "--escape-codes" },
@@ -262,6 +284,8 @@ local list_of_flags = {
     { "--no-fit-columns" },
     { "--mini-bytes" },
     { hide_unless="--mini-bytes", "--no-mini-bytes" },
+    { "--mini-decimal" },
+    { hide_unless="--mini-decimal", "--no-mini-decimal" },
     { "--mini-header" },
     { hide_unless="--mini-header --nix", "--no-mini-header" },
     { "--more-colors=", morec, "list", "" },
