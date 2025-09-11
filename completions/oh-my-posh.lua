@@ -4,14 +4,23 @@ require("arghelper")
 local file_matches = clink.argmatcher():addarg(clink.filematches)
 
 local global_flags = ({
-  { hide=true, "-h"                                                      },
-  {            "--help",                             "help for command"  },
-  { hide=true, "-c"       ..file_matches                                 },
-  {            "--config" ..file_matches,  " <file>", "config file path" },
+  { hide=true, "-h"                                                                 },
+  {            "--help",                              "help for command"            },
+  { hide=true, "-c"       ..file_matches                                            },
+  {            "--config" ..file_matches,  " <file>", "config file path"            },
+  {            "--plain",                             "plain text output (no ANSI)" },
+  {            "--trace",                             "enable tracing"              },
 })
 
 
-local cache_parser = clink.argmatcher()
+local auth_parser = clink.argmatcher()
+  :_addexarg({
+    { "ytmda", "YouTube Music Desktop App (YTMDA) API" },
+  })
+  :_addexflags(global_flags)
+
+
+  local cache_parser = clink.argmatcher()
   :_addexarg({
     { "path",  "list cache path"         },
     { "clear", "remove all cache values" },
@@ -20,18 +29,9 @@ local cache_parser = clink.argmatcher()
   :_addexflags(global_flags)
 
 
-local completion_parser = clink.argmatcher()
-  :_addexarg({
-    { "bash",       "Generate the autocompletion script for bash"       },
-    { "fish",       "Generate the autocompletion script for fish"       },
-    { "powershell", "Generate the autocompletion script for powershell" },
-    { "zsh",        "Generate the autocompletion script for zsh"        },
-  })
-  :_addexflags(global_flags)
-
-
 local config_parser = clink.argmatcher()
   :_addexarg({
+    { "dsc",     "Manage Oh My Posh DSC (Desired State Configuration)" },
     { "export",  "Export your config"  },
     { "migrate", "Migrate your config" },
   })
@@ -41,20 +41,18 @@ local config_parser = clink.argmatcher()
 local debug_parser = clink.argmatcher()
   :_addexflags({
     global_flags,
-    { "-p", hide=true },
-    { "--plain",              "plain text output (no ANSI)" },
-    { "--pwd",   " <string>", "current working directory"   },
-    { "--shell", " <shell>",  "the shell to print for"      },
+    { "--pwd", " <string>", "current working directory" },
   })
 
 
 local font_parser = clink.argmatcher()
   :addarg(
     "install",
-    "configure")
+    "configure",
+    "dsc")
   :_addexflags({
     global_flags,
-    { "--user", "install font as user" },
+    { "--zip-folder", " <string>", "the folder inside the zip file to install fonts from" },
   })
 
 
@@ -79,7 +77,9 @@ local init_parser = clink.argmatcher()
     "powershell",
     "pwsh",
     "cmd",
-    "nu")
+    "nu",
+    "elvish",
+    "xonsh")
   :_addexflags({
     global_flags,
     { "-m", hide=true }, {"--manual", "enable/disable manual mode" },
@@ -111,7 +111,6 @@ local print_parser = clink.argmatcher()
                          { "--job-count",      " <int>",    "number of background jobs"                              },
                          { "--no-status",                   "no valid status code (cancelled or no command yet)"     },
                          { "--pipestatus",     " <string>", "the PIPESTATUS array"                                   },
-    { "-p", hide=true }, { "--plain",                       "plain text output (no ANSI)"                            },
                          { "--pswd",                        "current working directory (according to pwsh)"          },
                          { "--pwd",                         "current working directory"                              },
                          { "--shell",          " <string>", "the shell to print for"                                 },
@@ -131,19 +130,25 @@ local prompt_parser = clink.argmatcher()
   :_addexflags(global_flags)
 
 
-local feature_parser = clink.argmatcher():addarg("notice")
+local feature_parser = clink.argmatcher()
+  :addarg(
+    "notice",
+    "upgrade",
+    "reload")
+  :_addexflags(global_flags)
 
 local upgrade_parser = clink.argmatcher()
   :_addexflags({
     global_flags,
     { "-f", hide=true }, { "--force", "force the upgrade even if the version is up to date" },
+                         { "--debug", "enable/disable debug mode"                           },
   })
 
 
 clink.argmatcher("oh-my-posh")
   :_addexarg({
+    { "auth"       .. auth_parser,       "Authenticate against a service"                             },
     { "cache"      .. cache_parser,      "Interact with the oh-my-posh cache"                         },
-    { "completion" .. completion_parser, "Generate the autocompletion script for the specified shell" },
     { "config"     .. config_parser,     "Interact with the config"                                   },
     { "debug"      .. debug_parser,      "Print the prompt in debug mode"                             },
     { "disable"    .. feature_parser,    "Disable a feature"                                          },
@@ -152,6 +157,7 @@ clink.argmatcher("oh-my-posh")
     { "get"        .. get_parser,        "Get a value from oh-my-posh"                                },
     { "help",                            "Help about any command"                                     },
     { "init"       .. init_parser,       "Initialize your shell and config"                           },
+    { "notice",                          "Print the upgrade notice when a new version is available"   },
     { "print"      .. print_parser,      "Print the prompt/context"                                   },
     { "prompt"     .. prompt_parser,     "Set up the prompt for your shell (deprecated)"              },
     { "toggle",    " <flags>",           "Toggle a segment on/off on the fly"                         },
