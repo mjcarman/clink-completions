@@ -18,6 +18,7 @@ local auth_parser = clink.argmatcher()
     { "ytmda", "YouTube Music Desktop App (YTMDA) API" },
   })
   :_addexflags(global_flags)
+  :nofiles()
 
 
   local cache_parser = clink.argmatcher()
@@ -27,6 +28,7 @@ local auth_parser = clink.argmatcher()
     { "edit",  "edit cache values"       },
   })
   :_addexflags(global_flags)
+  :nofiles()
 
 
 local config_parser = clink.argmatcher()
@@ -36,6 +38,7 @@ local config_parser = clink.argmatcher()
     { "migrate", "Migrate your config" },
   })
   :_addexflags(global_flags)
+  :nofiles()
 
 
 local debug_parser = clink.argmatcher()
@@ -43,6 +46,7 @@ local debug_parser = clink.argmatcher()
     global_flags,
     { "--pwd", " <string>", "current working directory" },
   })
+  :nofiles()
 
 
 local font_parser = clink.argmatcher()
@@ -54,6 +58,7 @@ local font_parser = clink.argmatcher()
     global_flags,
     { "--zip-folder", " <string>", "the folder inside the zip file to install fonts from" },
   })
+  :nofiles()
 
 
 local get_parser = clink.argmatcher()
@@ -67,6 +72,7 @@ local get_parser = clink.argmatcher()
     global_flags,
     { "--shell", " <shell>", "the shell to print for" },
   })
+  :nofiles()
 
 
 local init_parser = clink.argmatcher()
@@ -86,6 +92,7 @@ local init_parser = clink.argmatcher()
     { "-p", hide=true }, {"--print",  "print the init script"      },
     { "-s", hide=true }, {"--strict", "run in strict mode"         },
   })
+  :nofiles()
 
 
 local print_parser = clink.argmatcher()
@@ -119,6 +126,7 @@ local print_parser = clink.argmatcher()
                          { "--status",         " <int>",    "last known status code"                                 },
     { "-w", hide=true }, { "--terminal-width", " <int>",    "width of the terminal"                                  },
   })
+  :nofiles()
 
 
 local feature_parser = clink.argmatcher()
@@ -127,6 +135,8 @@ local feature_parser = clink.argmatcher()
     "upgrade",
     "reload")
   :_addexflags(global_flags)
+  :nofiles()
+
 
 local upgrade_parser = clink.argmatcher()
   :_addexflags({
@@ -134,6 +144,7 @@ local upgrade_parser = clink.argmatcher()
     { "-f", hide=true }, { "--force", "force the upgrade even if the version is up to date" },
                          { "--debug", "enable/disable debug mode"                           },
   })
+  :nofiles()
 
 
 clink.argmatcher("oh-my-posh")
@@ -160,3 +171,4 @@ clink.argmatcher("oh-my-posh")
     { "-s", hide=true }, { "--shell",  " <shell>", "shell (deprecated)"  },
                          { "--version",            "version"             },
   })
+  :nofiles()
