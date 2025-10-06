@@ -121,15 +121,6 @@ local print_parser = clink.argmatcher()
   })
 
 
-local prompt_parser = clink.argmatcher()
-  :_addexarg({
-    { "debug",                 "Print the prompt in debug mode"   },
-    { "init",                  "Initialize your shell and config" },
-    { "print" .. print_parser, "Print the prompt/context"         },
-  })
-  :_addexflags(global_flags)
-
-
 local feature_parser = clink.argmatcher()
   :addarg(
     "notice",
@@ -159,7 +150,6 @@ clink.argmatcher("oh-my-posh")
     { "init"       .. init_parser,       "Initialize your shell and config"                           },
     { "notice",                          "Print the upgrade notice when a new version is available"   },
     { "print"      .. print_parser,      "Print the prompt/context"                                   },
-    { "prompt"     .. prompt_parser,     "Set up the prompt for your shell (deprecated)"              },
     { "toggle",    " <flags>",           "Toggle a segment on/off on the fly"                         },
     { "upgrade"    .. upgrade_parser,    "Upgrade when a new version is available."                   },
     { "version",                         "Print the version"                                          },
