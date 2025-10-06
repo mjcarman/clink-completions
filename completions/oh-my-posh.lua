@@ -21,7 +21,7 @@ local auth_parser = clink.argmatcher()
   :nofiles()
 
 
-  local cache_parser = clink.argmatcher()
+local cache_parser = clink.argmatcher()
   :_addexarg({
     { "path",  "list cache path"         },
     { "clear", "remove all cache values" },
@@ -31,11 +31,19 @@ local auth_parser = clink.argmatcher()
   :nofiles()
 
 
+local dsc_parser = clink.argmatcher()
+  :_addexflags({
+    global_flags,
+    { "--state", " <string>", "State configuration to set" },
+  })
+  :nofiles()
+
+
 local config_parser = clink.argmatcher()
   :_addexarg({
-    { "dsc",     "Manage Oh My Posh DSC (Desired State Configuration)" },
-    { "export",  "Export your config"  },
-    { "migrate", "Migrate your config" },
+    { "dsc"    .. dsc_parser, "Manage Oh My Posh DSC (Desired State Configuration)" },
+    { "export",               "Export your config"  },
+    { "migrate",              "Migrate your config" },
   })
   :_addexflags(global_flags)
   :nofiles()
@@ -128,6 +136,13 @@ local print_parser = clink.argmatcher()
   })
   :nofiles()
 
+local shell_parser = clink.argmatcher()
+  :_addexarg({
+    {"get"},
+    {"dsc" .. dsc_parser, "Manage Oh My Posh DSC (Desired State Configuration)"},
+  })
+  :_addexflags(global_flags)
+  :nofiles()
 
 local feature_parser = clink.argmatcher()
   :addarg(
@@ -161,14 +176,15 @@ clink.argmatcher("oh-my-posh")
     { "init"       .. init_parser,       "Initialize your shell and config"                           },
     { "notice",                          "Print the upgrade notice when a new version is available"   },
     { "print"      .. print_parser,      "Print the prompt/context"                                   },
-    { "toggle",    " <flags>",           "Toggle a segment on/off on the fly"                         },
+    { "shell"      .. shell_parser,      "Get the shell name"                                         },
+    { "toggle",    " <segments>",        "Toggle a segment on/off"                                    },
     { "upgrade"    .. upgrade_parser,    "Upgrade when a new version is available."                   },
     { "version",                         "Print the version"                                          },
   })
   :_addexflags({
     global_flags,
-    { "-i", hide=true }, { "--init",               "init (deprecated)"   },
-    { "-s", hide=true }, { "--shell",  " <shell>", "shell (deprecated)"  },
-                         { "--version",            "version"             },
+    { "-i", hide=true }, { "--init",               "init"  },
+    { "-s", hide=true }, { "--shell",  " <shell>", "shell" },
+                         { "--version",            "print the version number and exit"},
   })
   :nofiles()
