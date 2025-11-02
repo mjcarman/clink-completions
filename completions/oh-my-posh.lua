@@ -156,6 +156,8 @@ local feature_parser = clink.argmatcher()
 local upgrade_parser = clink.argmatcher()
   :_addexflags({
     global_flags,
+                         { "--auto",  "respect the cache interval for automatic updates"    },
+                         { "--debug", "enable/disable debug mode"                           },
     { "-f", hide=true }, { "--force", "force the upgrade even if the version is up to date" },
                          { "--debug", "enable/disable debug mode"                           },
   })
