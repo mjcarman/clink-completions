@@ -15,7 +15,8 @@ local global_flags = ({
 
 local auth_parser = clink.argmatcher()
   :_addexarg({
-    { "ytmda", "YouTube Music Desktop App (YTMDA) API" },
+    { "copilot", "GitHub Copilot API" },
+    { "ytmda",   "YouTube Music Desktop App (YTMDA) API" },
   })
   :_addexflags(global_flags)
   :nofiles()
@@ -25,9 +26,14 @@ local cache_parser = clink.argmatcher()
   :_addexarg({
     { "path",  "list cache path"         },
     { "clear", "remove all cache values" },
+    { "ttl",   "get cache TTL in days"   },
     { "edit",  "edit cache values"       },
   })
-  :_addexflags(global_flags)
+  :_addexflags({
+    global_flags,
+    { hide=true, "-s" },
+    { "--session", "show the session cache" },
+  })
   :nofiles()
 
 
@@ -43,7 +49,7 @@ local config_parser = clink.argmatcher()
   :_addexarg({
     { "dsc"    .. dsc_parser, "Manage Oh My Posh DSC (Desired State Configuration)" },
     { "export",               "Export your config"  },
-    { "migrate",              "Migrate your config" },
+    -- { "migrate",              "Migrate your config" },
   })
   :_addexflags(global_flags)
   :nofiles()
@@ -64,6 +70,7 @@ local font_parser = clink.argmatcher()
     "dsc")
   :_addexflags({
     global_flags,
+    { "--headless",                "install font without TUI" },
     { "--zip-folder", " <string>", "the folder inside the zip file to install fonts from" },
   })
   :nofiles()
@@ -78,7 +85,7 @@ local get_parser = clink.argmatcher()
     "width")
   :_addexflags({
     global_flags,
-    { "--shell", " <shell>", "the shell to print for" },
+    -- { "--shell", " <shell>", "the shell to print for" },
   })
   :nofiles()
 
@@ -96,6 +103,8 @@ local init_parser = clink.argmatcher()
     "xonsh")
   :_addexflags({
     global_flags,
+                         { "--debug", "enable/disable debug mode" },
+                         { "--eval",  "output the full init script for eval" },
     { "-m", hide=true }, {"--manual", "enable/disable manual mode" },
     { "-p", hide=true }, {"--print",  "print the init script"      },
     { "-s", hide=true }, {"--strict", "run in strict mode"         },
@@ -159,7 +168,6 @@ local upgrade_parser = clink.argmatcher()
                          { "--auto",  "respect the cache interval for automatic updates"    },
                          { "--debug", "enable/disable debug mode"                           },
     { "-f", hide=true }, { "--force", "force the upgrade even if the version is up to date" },
-                         { "--debug", "enable/disable debug mode"                           },
   })
   :nofiles()
 
@@ -168,6 +176,7 @@ clink.argmatcher("oh-my-posh")
   :_addexarg({
     { "auth"       .. auth_parser,       "Authenticate against a service"                             },
     { "cache"      .. cache_parser,      "Interact with the oh-my-posh cache"                         },
+    { "claude",                          "Render a prompt for Claude Code statusline"                 },
     { "config"     .. config_parser,     "Interact with the config"                                   },
     { "debug"      .. debug_parser,      "Print the prompt in debug mode"                             },
     { "disable"    .. feature_parser,    "Disable a feature"                                          },
