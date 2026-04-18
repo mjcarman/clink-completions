@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.6.9 (Apr 18, 2026)
+
+  * Added `docker` and `dockerd` completions (#206).
+  * Updated `bat` completions.
+  * [git] Improvements to `git config` completions (#208).
+  * [git] Clarified input hints for certain `git` completions.
+  * Fixed certain modules to gracefully handle when a newer version of Clink is required.
+
 ## 0.6.8 (Mar 5, 2026)
 
   * [git] Added support for git reftables.
